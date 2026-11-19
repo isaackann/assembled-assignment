@@ -63,7 +63,13 @@ export interface ReplayReport {
  */
 export function ingestLine(db: Db, line: string, now: number): IngestResult {
   const parsed = normalize(line);
-  if (!parsed.ok) return { outcome: "rejected", reason: parsed.reason, now, notifications: [] };
+  if (!parsed.ok)
+    return {
+      outcome: "rejected",
+      reason: parsed.reason,
+      now,
+      notifications: [],
+    };
   const event = parsed.event;
 
   // Evaluation time only moves forward. An event with an older timestamp does not rewind it.
@@ -73,7 +79,12 @@ export function ingestLine(db: Db, line: string, now: number): IngestResult {
   // time, before this event is applied. A duplicate or late line still moves time.
   const fired = transaction(db, () => fireDueTimers(db, clock));
   const result = (outcome: Outcome, reason: string | null, notifications: Notification[]) => {
-    return { outcome, reason, now: clock, notifications: [...fired, ...notifications] };
+    return {
+      outcome,
+      reason,
+      now: clock,
+      notifications: [...fired, ...notifications],
+    };
   };
 
   // Recording, applying and the incident writes are one transaction.
@@ -100,9 +111,13 @@ export function ingestLine(db: Db, line: string, now: number): IngestResult {
       saveQueueState(db, queue);
       return result("applied", null, checkRules(db, "queue", queue, event.ts, clock));
     }
-    const agent = applyAgentEvent(prevAgent, event);
-    saveAgentState(db, agent);
-    return result("applied", null, checkRules(db, "agent", agent, event.ts, clock, prevAgent));
+    if (event.type === "adherence_check" || event.type === "agent_state_change") {
+      const agent = applyAgentEvent(prevAgent, event);
+      saveAgentState(db, agent);
+      return result("applied", null, checkRules(db, "agent", agent, event.ts, clock, prevAgent));
+    }
+
+    return result("rejected", `Non-registered event.type`, []);
   });
 }
 
@@ -131,7 +146,11 @@ export function replayFeed(
     report.lines += 1;
     report.counts[result.outcome] += 1;
     if (result.reason !== null) {
-      report.skipped.push({ line: index + 1, outcome: result.outcome, reason: result.reason });
+      report.skipped.push({
+        line: index + 1,
+        outcome: result.outcome,
+        reason: result.reason,
+      });
     }
     report.notifications.push(...result.notifications);
     deliver(result.notifications);
@@ -187,7 +206,9 @@ function checkRules(
     // A new call ends the old episode even when the predicate still holds.
     // Compare individual fields: an unknown conjunction start must not hide a restart.
     const restarted =
-      result.holds && previous !== null && rule.conditions.some((condition) => {
+      result.holds &&
+      previous !== null &&
+      rule.conditions.some((condition) => {
         const field = findField(kind, condition.field);
         const before = field.since?.(previous) ?? null;
         const after = field.since?.(state) ?? null;
