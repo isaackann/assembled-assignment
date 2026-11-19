@@ -2,7 +2,7 @@
 // This is the one place to extend. A field added here can be used in a rule
 // without touching the engine.
 
-import type { StateKind } from "./rule.ts";
+import type { Condition, StateKind } from "./rule.ts";
 
 /** What is currently known about one queue: its latest snapshot. */
 export interface QueueState {
@@ -34,15 +34,26 @@ export type SubjectState = QueueState | AgentState;
 /** A field's value; null when it is unknown. */
 export type FieldValue = number | string | boolean | null;
 
+export type FieldType = "number" | "string" | "boolean";
+
+/** The operators a rule may use on each type of field. */
+export const OPERATORS: Record<FieldType, Condition["op"][]> = {
+  number: [">", ">=", "<", "<="],
+  string: ["=", "in"],
+  boolean: ["="],
+};
+
 /** A field a rule can test. */
 export interface Field {
   name: string;
   /** How the field reads in a message: "SLA used 108%". */
   label: string;
-  /** Decides which operators apply, and whether an incident settles before it closes. */
-  type: "number" | "string" | "boolean";
+  /** Decides which operators apply (OPERATORS), and whether an incident settles before it closes. */
+  type: FieldType;
   /** Printed after a number: "%" or "s". */
   unit?: string;
+  /** For a text field, every value a rule may name. A value outside it would never match. */
+  values?: string[];
   read(state: SubjectState): FieldValue;
   /** When the current value started, if the feed says. Used for "for 10 minutes". */
   since?(state: SubjectState): number | null;
@@ -84,6 +95,7 @@ const AGENT_FIELDS: Field[] = [
     name: "state",
     label: "state",
     type: "string",
+    values: ["available", "on_call", "on_break", "in_meeting", "offline"],
     read: (s) => asAgent(s).state,
     since: (s) => asAgent(s).state_since,
   },
@@ -99,11 +111,21 @@ const AGENT_FIELDS: Field[] = [
 
 const CATALOG: Record<StateKind, Field[]> = { queue: QUEUE_FIELDS, agent: AGENT_FIELDS };
 
+/** The catalog entry for a field, or null if the catalog has no such field. */
+export function lookupField(kind: StateKind, name: string): Field | null {
+  return CATALOG[kind].find((candidate) => candidate.name === name) ?? null;
+}
+
 /** The catalog entry for a field. Throws if the catalog has no such field. */
 export function findField(kind: StateKind, name: string): Field {
-  const field = CATALOG[kind].find((candidate) => candidate.name === name);
+  const field = lookupField(kind, name);
   if (!field) throw new Error(`Unknown ${kind} field "${name}"`);
   return field;
+}
+
+/** Every field of a kind, in catalog order. */
+export function listFields(kind: StateKind): Field[] {
+  return CATALOG[kind];
 }
 
 /** The queue or agent id of a subject's state. */

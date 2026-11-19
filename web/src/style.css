@@ -1,0 +1,207 @@
+:root {
+  --bg: #f6f7f9;
+  --panel: #ffffff;
+  --text: #1c2430;
+  --muted: #5d6877;
+  --line: #dde2e8;
+  --accent: #00453d;
+  --opened: #b42318;
+  --follow: #b54708;
+  --closed: #067647;
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    sans-serif;
+  font-size: 15px;
+  color: var(--text);
+  background: var(--bg);
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+}
+
+.page {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 12px;
+}
+
+h1 {
+  font-size: 20px;
+  margin: 0;
+  margin-right: auto;
+}
+
+h2 {
+  font-size: 16px;
+  margin: 20px 0 8px;
+}
+
+.feed {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.clock {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 24px;
+}
+
+@media (max-width: 800px) {
+  main {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+section {
+  min-width: 0;
+}
+
+button {
+  font: inherit;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: white;
+  cursor: pointer;
+}
+
+button:disabled {
+  background: var(--line);
+  border-color: var(--line);
+  color: var(--muted);
+  cursor: default;
+}
+
+button.quiet {
+  background: transparent;
+  color: var(--accent);
+  border-color: var(--line);
+}
+
+select,
+input[type="number"] {
+  font: inherit;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+}
+
+input[type="number"] {
+  width: 80px;
+}
+
+ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.rules li,
+.notifications li {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+}
+
+.rules li div {
+  flex: 1;
+}
+
+.notifications .time {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.notifications .kind {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  min-width: 72px;
+}
+
+.notifications .opened .kind {
+  color: var(--opened);
+}
+
+.notifications .follow_up .kind {
+  color: var(--follow);
+}
+
+.notifications .closed .kind {
+  color: var(--closed);
+}
+
+.rule-form {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+fieldset {
+  border: none;
+  padding: 0;
+  margin: 0 0 14px;
+}
+
+legend {
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.shortcuts,
+.condition {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.ids {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+
+.who,
+.empty,
+.loading {
+  color: var(--muted);
+}
+
+.errors {
+  color: var(--opened);
+  margin-bottom: 10px;
+}
+
+.saved {
+  color: var(--closed);
+}

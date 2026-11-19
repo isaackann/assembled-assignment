@@ -7,17 +7,22 @@
   },
   "scripts": {
     "replay": "node scripts/replay.ts data/events.jsonl",
-    "simulate": "node scripts/simulate.ts data/events.jsonl",
+    "simulate": "vite build web --logLevel warn && node scripts/simulate.ts data/events.jsonl",
     "test": "vitest run",
-    "check-types": "tsc --noEmit"
+    "check-types": "tsc --noEmit && tsc --noEmit -p web"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
     "@types/node": "^24.19.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "typescript": "^7.0.2",
+    "vite": "^8.3.8",
     "vitest": "^5.1.1"
   },
   "dependencies": {
-    "express": "^5.3.0"
+    "express": "^5.3.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
   }
 }

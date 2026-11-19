@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import { formatTime } from "../src/engine/normalize.ts";
 import { handleEvent, tick } from "../src/ingest.ts";
-import { type Db, openStore, seedRules } from "../src/store/store.ts";
+import { type Db, openStore, insertRules } from "../src/store/store.ts";
 import { replayFeed, seededStore } from "../scripts/replay.ts";
 import {
   adherenceRule,
@@ -71,7 +71,7 @@ describe("handleEvent with a deadline the tick has not reached", () => {
     // Out of adherence from 09:00 with a 10 minute rule: due at 09:10. The agent is
     // back at 09:10:10, before any tick. The opening goes out, then the close.
     const db = openStore(":memory:");
-    seedRules(db, [
+    insertRules(db, [
       adherenceRule({ id: "mine", subject: { kind: "agent", resource_ids: ["a_19"] } }),
     ]);
     const check = (time: string, inViolation: boolean) =>

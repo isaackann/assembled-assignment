@@ -43,8 +43,8 @@ export function transaction<T>(db: Db, work: () => T): T {
   }
 }
 
-/** Saves rules as given. */
-export function seedRules(db: Db, rules: Rule[]): void {
+/** Saves new rules as given. Callers check them first (validateRule). */
+export function insertRules(db: Db, rules: Rule[]): void {
   const insert = db.prepare(
     `insert into rules (id, owner_id, subject, conditions, for_seconds)
      values (?, ?, ?, ?, ?)`,
@@ -60,13 +60,32 @@ export function seedRules(db: Db, rules: Rule[]): void {
   }
 }
 
-/** Every rule. */
+/** Every rule that has not been deleted. */
 export function listRules(db: Db): Rule[] {
-  const rows = db.prepare("select * from rules order by id").all() as Row[];
+  const rows = db
+    .prepare("select * from rules where deleted_at is null order by id")
+    .all() as Row[];
   return rows.map(toRule);
 }
 
-/** One rule by id, or null. */
+/**
+ * Deletes a rule: it keeps its row, so its history stays readable, but is no longer
+ * checked. Its live incidents close at `now` with no message: the owner deleted the
+ * rule themselves. Returns false if there is no such rule, or it is already deleted.
+ */
+export function deleteRule(db: Db, ruleId: string, now: number): boolean {
+  const result = db
+    .prepare("update rules set deleted_at = ? where id = ? and deleted_at is null")
+    .run(now, ruleId);
+  if (result.changes === 0) return false;
+  db.prepare(
+    `update incidents set status = 'closed', closed_at = ?, next_due_at = null
+     where rule_id = ? and status <> 'closed'`,
+  ).run(now, ruleId);
+  return true;
+}
+
+/** One rule by id, deleted or not, or null. */
 export function getRule(db: Db, ruleId: string): Rule | null {
   const row = db.prepare("select * from rules where id = ?").get(ruleId);
   return row ? toRule(row) : null;
@@ -82,15 +101,31 @@ function toRule(row: Row): Rule {
   };
 }
 
-/** Saves the directory: each team, its lead, and its agents. */
+/** Saves the directory: the queues, and each team with its lead and its agents. */
 export function seedDirectory(db: Db, directory: Directory): void {
+  const insertQueue = db.prepare("insert into queues (id) values (?)");
   const insertTeam = db.prepare("insert into teams (id, lead_id) values (?, ?)");
   const insertUser = db.prepare("insert into users (id, role, team_id) values (?, ?, ?)");
+  for (const queueId of directory.queues) insertQueue.run(queueId);
   for (const team of directory.teams) {
     insertTeam.run(team.id, team.lead_id);
     insertUser.run(team.lead_id, "lead", null);
     for (const agentId of team.agent_ids) insertUser.run(agentId, "agent", team.id);
   }
+}
+
+/** The directory as it is stored, in the shape it was seeded from. */
+export function getDirectory(db: Db): Directory {
+  const queues = db.prepare("select id from queues order by id").all() as Row[];
+  const teams = db.prepare("select id, lead_id from teams order by id").all() as Row[];
+  return {
+    queues: queues.map((row) => row.id as string),
+    teams: teams.map((row) => ({
+      id: row.id as string,
+      lead_id: row.lead_id as string,
+      agent_ids: listTeamAgentIds(db, [row.id as string]),
+    })),
+  };
 }
 
 /** The agents on any of these teams, by team id. */
@@ -150,13 +185,7 @@ export function saveAgentState(db: Db, agent: AgentState): void {
     `insert or replace into agent_state
        (agent_id, state, state_since, violation_since, last_event_ts)
      values (?, ?, ?, ?, ?)`,
-  ).run(
-    agent.agent_id,
-    agent.state,
-    agent.state_since,
-    agent.violation_since,
-    agent.last_event_ts,
-  );
+  ).run(agent.agent_id, agent.state, agent.state_since, agent.violation_since, agent.last_event_ts);
 }
 
 /** The incident for this rule and subject that has not closed, if any. */
@@ -230,6 +259,17 @@ export function updateIncident(db: Db, id: number, incident: NewIncident): void 
 
 function openedValuesJson(incident: NewIncident): string | null {
   return incident.opened_values ? JSON.stringify(incident.opened_values) : null;
+}
+
+/** Every notification sent to one person, oldest first. */
+export function listNotifications(db: Db, recipientId: string): Notification[] {
+  const rows = db
+    .prepare("select * from notifications where recipient_id = ? order by at, id")
+    .all(recipientId) as Row[];
+  return rows.map((row) => ({
+    ...(row as unknown as Notification),
+    detail: JSON.parse(row.detail as string),
+  }));
 }
 
 /** Saves a notification for an incident and returns the stored row. */
