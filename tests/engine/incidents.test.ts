@@ -37,7 +37,7 @@ function openIncident(overrides: Partial<Incident> = {}): Incident {
     last_notified_at: BREACH_SEEN,
     next_due_at: BREACH_SEEN + FOLLOW_UP_MS,
     follow_ups: 0,
-    opened_summary: "SLA used 108.3%",
+    opened_values: { sla_pct: (130 / 120) * 100 },
     closed_at: null,
     ...overrides,
   };
@@ -56,7 +56,7 @@ describe("onEvaluation", () => {
           last_notified_at: BREACH_SEEN,
           next_due_at: at("09:45:00"),
           follow_ups: 0,
-          opened_summary: "SLA used 108.3%",
+          opened_values: { sla_pct: (130 / 120) * 100 },
           closed_at: null,
         },
         notifications: [
@@ -148,7 +148,7 @@ describe("onEvaluation", () => {
       status: "pending",
       opened_at: null,
       last_notified_at: null,
-      opened_summary: null,
+      opened_values: null,
       next_due_at: at("09:40:00"),
     });
 
@@ -196,12 +196,12 @@ describe("onEvaluation", () => {
         rule_id: "rule_lead_1_team_adherence",
         subject_id: "a_19",
         opened_at: at("09:45:00"),
-        opened_summary: "out of adherence",
+        opened_values: { in_violation: true },
       });
       const change = onEvaluation(
         evaluation({
           rule: adherenceRule(),
-          state: agentState({ in_violation: false, violation_since: null, state: "available" }),
+          state: agentState({ violation_since: null, state: "available" }),
           live,
           result: { holds: false, since: null },
           now: at("10:10:30"),
@@ -257,7 +257,7 @@ describe("onTimer", () => {
       started_at: at("09:35:00"),
       opened_at: null,
       last_notified_at: null,
-      opened_summary: null,
+      opened_values: null,
       next_due_at: at("09:45:00"),
     });
     const change = onTimer({
@@ -302,6 +302,20 @@ describe("onTimer", () => {
         message: "queue billing: still true after 15 min: SLA used 200% (was SLA used 108.3%)",
       }),
     ]);
+  });
+
+  it("says no '(was …)' when the value has not changed as written", () => {
+    // 108.31 and 108.33 both read "108.3%": a change too small to show is not reported.
+    const change = onTimer({
+      rule: breachRule(),
+      incident: openIncident({ opened_values: { sla_pct: 108.31 } }),
+      state: queueState(),
+      at: at("09:45:00"),
+    });
+
+    expect(change.notifications[0]?.message).toBe(
+      "queue billing: still true after 15 min: SLA used 108.3%",
+    );
   });
 
   it("closes a settling incident once the settle time has passed", () => {

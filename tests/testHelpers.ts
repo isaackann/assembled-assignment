@@ -76,7 +76,6 @@ export function agentState(overrides: Partial<AgentState> = {}): AgentState {
     agent_id: "a_19",
     state: "on_break",
     state_since: at("09:35:00"),
-    in_violation: true,
     violation_since: at("09:35:00"),
     last_event_ts: at("09:36:00"),
     ...overrides,

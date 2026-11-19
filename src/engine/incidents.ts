@@ -12,10 +12,10 @@
 // that only tests states (on a call, out of adherence) closes on the event,
 // because a transition is definitive.
 
-import { type SubjectState, findField, subjectIdOf } from "../shared/catalog.ts";
+import { type FieldValue, type SubjectState, findField, subjectIdOf } from "../shared/catalog.ts";
 import { type Rule, stateKindOf } from "../shared/rule.ts";
 import type { Evaluation } from "./evaluate.ts";
-import { describeRule, describeSeen, minutes } from "./messages.ts";
+import { describeRule, describeSeen, describeValues, minutes, seenValues } from "./messages.ts";
 import { formatTime } from "./normalize.ts";
 
 /** How often an open incident repeats. */
@@ -38,8 +38,11 @@ export interface NewIncident {
   /** When onTimer must next run for it; null once closed. */
   next_due_at: number | null;
   follow_ups: number;
-  /** What the opening message saw ("SLA used 108.3%"), so follow-ups can say what changed. */
-  opened_summary: string | null;
+  /**
+   * The tested fields' values when it opened ({ sla_pct: 108.3 }), so a follow-up
+   * can say what changed. Values, not words: they are put into words per message.
+   */
+  opened_values: Record<string, FieldValue> | null;
   closed_at: number | null;
 }
 
@@ -94,7 +97,7 @@ export function onEvaluation(input: EvaluationInput): IncidentChange | null {
       last_notified_at: null,
       next_due_at: startedAt + rule.for_seconds * 1000,
       follow_ups: 0,
-      opened_summary: null,
+      opened_values: null,
       closed_at: null,
     };
     // Already long enough (no `for`, or an old start time): open now. A deadline
@@ -167,7 +170,8 @@ function settles(rule: Rule): boolean {
 }
 
 function open(rule: Rule, incident: NewIncident, state: SubjectState, at: number): IncidentChange {
-  const seen = describeSeen(rule, state);
+  const values = seenValues(rule, state);
+  const seen = describeValues(rule, values);
   const held = rule.for_seconds > 0 ? ` for ${minutes(at - incident.started_at)} min` : "";
   return {
     next: {
@@ -176,7 +180,7 @@ function open(rule: Rule, incident: NewIncident, state: SubjectState, at: number
       opened_at: at,
       last_notified_at: at,
       next_due_at: at + FOLLOW_UP_MS,
-      opened_summary: seen,
+      opened_values: values,
     },
     notifications: [
       notification(rule, state, "opened", 0, at, `${seen}${held} (rule: ${describeRule(rule)})`),
@@ -186,7 +190,9 @@ function open(rule: Rule, incident: NewIncident, state: SubjectState, at: number
 
 function followUp(rule: Rule, incident: Incident, state: SubjectState, at: number): IncidentChange {
   const seen = describeSeen(rule, state);
-  const was = seen === incident.opened_summary ? "" : ` (was ${incident.opened_summary})`;
+  // Compared as they would be written, so a change too small to show is not reported.
+  const then = describeValues(rule, incident.opened_values!);
+  const was = seen === then ? "" : ` (was ${then})`;
   const seq = incident.follow_ups + 1;
   return {
     next: { ...incident, follow_ups: seq, last_notified_at: at, next_due_at: at + FOLLOW_UP_MS },

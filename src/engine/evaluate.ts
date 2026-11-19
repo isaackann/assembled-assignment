@@ -44,24 +44,29 @@ export function evaluateRule(rule: Rule, state: SubjectState): Evaluation {
 }
 
 // A field with no value (for example sla_pct on a queue with no SLA target) matches nothing.
+// The type rules out an operator and value that disagree, but rules arrive as JSON,
+// so a mismatch is checked again here and throws: it must never quietly read as false.
 function conditionHolds(condition: Condition, actual: FieldValue): boolean {
-  if (actual === null) return false;
   const { op, value } = condition;
+  const invalid = (needs: string) =>
+    new Error(`Operator "${op}" needs ${needs} (${condition.field})`);
 
   switch (op) {
     case "=":
+      if (Array.isArray(value)) throw invalid("a single value, not a list");
       return actual === value;
     case "in":
-      return Array.isArray(value) && typeof actual === "string" && value.includes(actual);
+      if (!Array.isArray(value)) throw invalid("a list of text values");
+      if (actual === null) return false;
+      if (typeof actual !== "string") throw invalid("a text field");
+      return value.includes(actual);
     case ">":
     case ">=":
     case "<":
     case "<=":
-      if (typeof actual !== "number" || typeof value !== "number") {
-        throw new Error(
-          `Operator "${op}" needs a number field and a number value (${condition.field})`,
-        );
-      }
+      if (typeof value !== "number") throw invalid("a number value");
+      if (actual === null) return false;
+      if (typeof actual !== "number") throw invalid("a number field");
       if (op === ">") return actual > value;
       if (op === ">=") return actual >= value;
       if (op === "<") return actual < value;

@@ -146,6 +146,14 @@ describe("ingestLine", () => {
         ["follow_up", at("09:45:00")],
         ["follow_up", at("10:00:00")],
       ]);
+      // Both fire before the 10:05 snapshot is applied, so nothing has changed since opening:
+      // the opening values came back from the store as values and read the same.
+      expect(later?.notifications[0]?.message).toBe(
+        "queue billing: still true after 15 min: SLA used 108.3%",
+      );
+      expect(getLiveIncident(db, "rule_billing_sla_breached", "billing")?.opened_values).toEqual({
+        sla_pct: (130 / 120) * 100,
+      });
       expect(getLiveIncident(db, "rule_billing_sla_breached", "billing")?.next_due_at).toBe(
         at("10:15:00"),
       );
@@ -311,7 +319,8 @@ describe("ingestLine", () => {
       expect(getAgentState(db, "a_23")).toMatchObject({
         state: "in_meeting",
         state_since: at("10:15:30"),
-        in_violation: true,
+        // The check gives no violation start, so it starts at the check.
+        violation_since: at("10:15:30"),
       });
     });
   });

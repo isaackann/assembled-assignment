@@ -27,13 +27,12 @@ create table queue_state (
   last_event_ts            integer not null
 );
 
--- One row per agent: what they are doing and since when, whether they are out of
--- adherence and since when, and the time of the newest event applied.
+-- One row per agent: what they are doing and since when, since when they have been
+-- out of adherence (null while in adherence), and the time of the newest event applied.
 create table agent_state (
   agent_id        text primary key,
   state           text not null,
   state_since     integer not null,
-  in_violation    integer not null check (in_violation in (0, 1)),
   violation_since integer,
   last_event_ts   integer not null
 );
@@ -63,7 +62,8 @@ create table rules (
 
 -- One rule being true for one subject. Pending: holding, but not yet for long
 -- enough. Settling: no longer true, waiting out the settle time. next_due_at is
--- when the incident's timer fires (open it, follow up, or close it).
+-- when the incident's timer fires (open it, follow up, or close it). opened_values
+-- is JSON: the tested fields' values when it opened, by field name.
 create table incidents (
   id               integer primary key,
   rule_id          text not null references rules (id),
@@ -74,7 +74,7 @@ create table incidents (
   last_notified_at integer,
   next_due_at      integer,
   follow_ups       integer not null default 0,
-  opened_summary   text,
+  opened_values    text,
   closed_at        integer
 );
 

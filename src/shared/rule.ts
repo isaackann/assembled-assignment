@@ -3,18 +3,15 @@
 // anyone is told. Its owner is the person who created it and the person it notifies.
 // The engine and (later) the API, the form and the assistant all use this one type.
 
-/** Comparisons on a number field, `=` on any field, and `in` on a text field. */
-export type Operator = ">" | ">=" | "<" | "<=" | "=" | "in";
-
-/** What a condition compares against: a number, a text value, yes/no, or a list of text values for `in`. */
-export type ConditionValue = number | string | boolean | string[];
-
-/** One test of a catalog field against a fixed value. */
-export interface Condition {
-  field: string;
-  op: Operator;
-  value: ConditionValue;
-}
+/**
+ * One test of a catalog field against a fixed value. The operator decides the
+ * value's type, so an operator and a value that disagree cannot be written:
+ * comparisons take a number, `in` takes a list of text values, `=` takes one value.
+ */
+export type Condition =
+  | { field: string; op: ">" | ">=" | "<" | "<="; value: number }
+  | { field: string; op: "in"; value: string[] }
+  | { field: string; op: "="; value: string | number | boolean };
 
 /**
  * What a rule watches, by id: named queues, named agents, or every agent on the

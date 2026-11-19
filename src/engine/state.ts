@@ -36,25 +36,17 @@ export function applyAgentEvent(
 
   if (event.type === "agent_state_change") {
     // Only adherence checks report adherence; carry the last known answer forward.
-    return {
-      ...base,
-      in_violation: prev?.in_violation ?? false,
-      violation_since: prev?.violation_since ?? null,
-    };
+    return { ...base, violation_since: prev?.violation_since ?? null };
   }
 
-  return {
-    ...base,
-    in_violation: event.in_violation,
-    violation_since: violationSince(prev, event),
-  };
+  return { ...base, violation_since: violationSince(prev, event) };
 }
 
 // The feed's start time when it gives one. With none (a_23), a violation that was
 // already being tracked keeps its first start, and a new one starts at this check.
+// So an agent out of adherence always has a start, and null means in adherence.
 function violationSince(prev: AgentState | null, check: AdherenceCheck): number | null {
   if (!check.in_violation) return null;
   if (check.violation_started_at !== null) return check.violation_started_at;
-  if (prev?.in_violation && prev.violation_since !== null) return prev.violation_since;
-  return check.ts;
+  return prev?.violation_since ?? check.ts;
 }

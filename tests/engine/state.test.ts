@@ -22,7 +22,6 @@ describe("applyAgentEvent", () => {
       agent_id: "a_31",
       state: "available",
       state_since: at("09:00:00"),
-      in_violation: false,
       violation_since: null,
       last_event_ts: at("09:00:00"),
     });
@@ -33,7 +32,6 @@ describe("applyAgentEvent", () => {
       agent_id: "a_31",
       state: "available",
       state_since: at("09:20:00"),
-      in_violation: false,
       violation_since: null,
     });
     expect(applyAgentEvent(before, agentEvent(38))).toMatchObject({
@@ -47,7 +45,6 @@ describe("applyAgentEvent", () => {
       agent_id: "a_31",
       state: "on_call",
       state_since: at("09:00:00"),
-      in_violation: false,
       violation_since: null,
     });
     // Line 38 is a_31 going on a call at 09:30; here it follows another call.
@@ -62,7 +59,6 @@ describe("applyAgentEvent", () => {
       agent_id: "a_31",
       state: "on_call",
       state_since: at("09:30:00"),
-      in_violation: false,
       violation_since: null,
     });
     expect(applyAgentEvent(onCall, agentEvent(56))).toMatchObject({
@@ -78,7 +74,6 @@ describe("applyAgentEvent", () => {
       agent_id: "a_23",
       state: "on_call",
       state_since: at("09:45:00"),
-      in_violation: false,
       violation_since: null,
     });
 
@@ -86,7 +81,6 @@ describe("applyAgentEvent", () => {
       agent_id: "a_23",
       state: "in_meeting",
       state_since: at("10:15:30"),
-      in_violation: true,
       // The check gives no violation start, and a_23 was not in violation before.
       violation_since: at("10:15:30"),
       last_event_ts: at("10:15:30"),
@@ -94,9 +88,8 @@ describe("applyAgentEvent", () => {
   });
 
   it("takes the violation start from the check when it gives one (line 50: a_19 since 09:35)", () => {
-    const onBreak = agentState({ state: "on_break", in_violation: false, violation_since: null });
+    const onBreak = agentState({ state: "on_break", violation_since: null });
     expect(applyAgentEvent(onBreak, agentEvent(50))).toMatchObject({
-      in_violation: true,
       violation_since: at("09:35:00"),
     });
   });
@@ -117,7 +110,6 @@ describe("applyAgentEvent", () => {
 
   it("clears the violation when a check says the agent is back in adherence (line 76: a_19)", () => {
     expect(applyAgentEvent(agentState(), agentEvent(76))).toMatchObject({
-      in_violation: false,
       violation_since: null,
     });
   });
@@ -126,7 +118,6 @@ describe("applyAgentEvent", () => {
     // a_19 is back to available at 10:10, but only the 10:10:30 check says the violation ended.
     expect(applyAgentEvent(agentState(), agentEvent(75))).toMatchObject({
       state: "available",
-      in_violation: true,
       violation_since: at("09:35:00"),
     });
   });

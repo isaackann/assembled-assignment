@@ -23,7 +23,6 @@ export interface AgentState {
   state: string;
   /** When the agent entered `state`, by the feed's own times. */
   state_since: number;
-  in_violation: boolean;
   /** When the current violation started; null when the agent is in adherence. */
   violation_since: number | null;
   last_event_ts: number;
@@ -92,7 +91,8 @@ const AGENT_FIELDS: Field[] = [
     name: "in_violation",
     label: "out of adherence",
     type: "boolean",
-    read: (s) => asAgent(s).in_violation,
+    // An agent out of adherence always has a start (state.ts), so this is the one record of it.
+    read: (s) => asAgent(s).violation_since !== null,
     since: (s) => asAgent(s).violation_since,
   },
 ];
