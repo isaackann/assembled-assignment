@@ -27,34 +27,62 @@ create table queue_state (
   last_event_ts            integer not null
 );
 
--- One row per agent. Only the newest event time so far, which is what the late
--- check needs. The agent's state and adherence columns are not built yet.
+-- One row per agent: what they are doing and since when, whether they are out of
+-- adherence and since when, and the time of the newest event applied.
 create table agent_state (
-  agent_id      text primary key,
-  last_event_ts integer not null
+  agent_id        text primary key,
+  state           text not null,
+  state_since     integer not null,
+  in_violation    integer not null check (in_violation in (0, 1)),
+  violation_since integer,
+  last_event_ts   integer not null
 );
 
--- Scope and conditions are JSON: they are always read and written whole with the rule.
+-- The seeded directory. An agent's user id is its agent_id in the feed. A team
+-- has one lead; each agent is on one team.
+create table teams (
+  id      text primary key,
+  lead_id text not null
+);
+
+create table users (
+  id      text primary key,
+  role    text not null check (role in ('lead', 'agent')),
+  team_id text references teams (id)
+);
+
+-- Subject ({ kind, resource_ids }) and conditions are JSON: they are always read
+-- and written whole with the rule.
 create table rules (
-  id         text primary key,
-  owner_id   text not null,
-  subject    text not null,
-  scope      text not null,
-  conditions text not null
+  id          text primary key,
+  owner_id    text not null,
+  subject     text not null,
+  conditions  text not null,
+  for_seconds integer not null default 0
 );
 
--- One rule being true for one subject.
+-- One rule being true for one subject. Pending: holding, but not yet for long
+-- enough. Settling: no longer true, waiting out the settle time. next_due_at is
+-- when the incident's timer fires (open it, follow up, or close it).
 create table incidents (
-  id         integer primary key,
-  rule_id    text not null references rules (id),
-  subject_id text not null,
-  status     text not null,
-  started_at integer not null,
-  opened_at  integer not null
+  id               integer primary key,
+  rule_id          text not null references rules (id),
+  subject_id       text not null,
+  status           text not null check (status in ('pending', 'open', 'settling', 'closed')),
+  started_at       integer not null,
+  opened_at        integer,
+  last_notified_at integer,
+  next_due_at      integer,
+  follow_ups       integer not null default 0,
+  opened_summary   text,
+  closed_at        integer
 );
 
 -- At most one live incident per rule and subject.
 create unique index incidents_live on incidents (rule_id, subject_id) where status <> 'closed';
+
+-- The timer reads live incidents by due time.
+create index incidents_due on incidents (next_due_at) where status <> 'closed';
 
 -- Written in the same transaction as the incident change that caused them, so the
 -- two cannot drift apart. The unique key means a retry cannot double-send.
@@ -62,7 +90,7 @@ create table notifications (
   id           integer primary key,
   incident_id  integer not null references incidents (id),
   recipient_id text not null,
-  kind         text not null,
+  kind         text not null check (kind in ('opened', 'follow_up', 'closed')),
   seq          integer not null,
   at           integer not null,
   message      text not null,

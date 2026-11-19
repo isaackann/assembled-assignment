@@ -8,7 +8,8 @@ import { DatabaseSync } from "node:sqlite";
 
 import type { Incident, NewIncident, NewNotification } from "../engine/incidents.ts";
 import type { FeedEvent } from "../engine/normalize.ts";
-import type { QueueState } from "../shared/catalog.ts";
+import type { AgentState, QueueState } from "../shared/catalog.ts";
+import type { Directory } from "../shared/directory.ts";
 import type { Rule } from "../shared/rule.ts";
 
 /** An open database with the schema applied. */
@@ -45,15 +46,16 @@ export function transaction<T>(db: Db, work: () => T): T {
 /** Saves rules as given. */
 export function seedRules(db: Db, rules: Rule[]): void {
   const insert = db.prepare(
-    "insert into rules (id, owner_id, subject, scope, conditions) values (?, ?, ?, ?, ?)",
+    `insert into rules (id, owner_id, subject, conditions, for_seconds)
+     values (?, ?, ?, ?, ?)`,
   );
   for (const rule of rules) {
     insert.run(
       rule.id,
       rule.owner_id,
-      rule.subject,
-      JSON.stringify(rule.scope),
+      JSON.stringify(rule.subject),
       JSON.stringify(rule.conditions),
+      rule.for_seconds,
     );
   }
 }
@@ -61,13 +63,42 @@ export function seedRules(db: Db, rules: Rule[]): void {
 /** Every rule. */
 export function listRules(db: Db): Rule[] {
   const rows = db.prepare("select * from rules order by id").all() as Row[];
-  return rows.map((row) => ({
+  return rows.map(toRule);
+}
+
+/** One rule by id, or null. */
+export function getRule(db: Db, ruleId: string): Rule | null {
+  const row = db.prepare("select * from rules where id = ?").get(ruleId);
+  return row ? toRule(row) : null;
+}
+
+function toRule(row: Row): Rule {
+  return {
     id: row.id as string,
     owner_id: row.owner_id as string,
-    subject: row.subject as Rule["subject"],
-    scope: JSON.parse(row.scope as string),
+    subject: JSON.parse(row.subject as string),
     conditions: JSON.parse(row.conditions as string),
-  }));
+    for_seconds: row.for_seconds as number,
+  };
+}
+
+/** Saves the directory: each team, its lead, and its agents. */
+export function seedDirectory(db: Db, directory: Directory): void {
+  const insertTeam = db.prepare("insert into teams (id, lead_id) values (?, ?)");
+  const insertUser = db.prepare("insert into users (id, role, team_id) values (?, ?, ?)");
+  for (const team of directory.teams) {
+    insertTeam.run(team.id, team.lead_id);
+    insertUser.run(team.lead_id, "lead", null);
+    for (const agentId of team.agent_ids) insertUser.run(agentId, "agent", team.id);
+  }
+}
+
+/** The agents on any of these teams, by team id. */
+export function listTeamAgentIds(db: Db, teamIds: string[]): string[] {
+  const select = db.prepare(
+    "select id from users where team_id = ? and role = 'agent' order by id",
+  );
+  return teamIds.flatMap((teamId) => (select.all(teamId) as Row[]).map((row) => row.id as string));
 }
 
 /**
@@ -107,17 +138,27 @@ export function saveQueueState(db: Db, queue: QueueState): void {
   ).run({ ...queue });
 }
 
-/** Time of the newest event applied for this agent, or null if there is none. */
-export function getAgentLastEventTs(db: Db, agentId: string): number | null {
-  const row = db.prepare("select last_event_ts from agent_state where agent_id = ?").get(agentId);
-  return row ? (row.last_event_ts as number) : null;
+/** The agent's current state, or null if no event has been applied for them. */
+export function getAgentState(db: Db, agentId: string): AgentState | null {
+  const row = db.prepare("select * from agent_state where agent_id = ?").get(agentId);
+  if (!row) return null;
+  // SQLite has no boolean: in_violation is stored as 0 or 1.
+  return { ...(row as unknown as AgentState), in_violation: row.in_violation === 1 };
 }
 
-/** Records the time of the newest event applied for this agent. */
-export function saveAgentLastEventTs(db: Db, agentId: string, ts: number): void {
-  db.prepare("insert or replace into agent_state (agent_id, last_event_ts) values (?, ?)").run(
-    agentId,
-    ts,
+/** Replaces the agent's state. */
+export function saveAgentState(db: Db, agent: AgentState): void {
+  db.prepare(
+    `insert or replace into agent_state
+       (agent_id, state, state_since, in_violation, violation_since, last_event_ts)
+     values (?, ?, ?, ?, ?, ?)`,
+  ).run(
+    agent.agent_id,
+    agent.state,
+    agent.state_since,
+    agent.in_violation ? 1 : 0,
+    agent.violation_since,
+    agent.last_event_ts,
   );
 }
 
@@ -129,21 +170,59 @@ export function getLiveIncident(db: Db, ruleId: string, subjectId: string): Inci
   return row ? (row as unknown as Incident) : null;
 }
 
-/** Saves a new incident and returns its id. */
+/** The live incident with the earliest due time at or before `clock`, or null if none is due. */
+export function nextDueIncident(db: Db, clock: number): Incident | null {
+  const row = db
+    .prepare(
+      `select * from incidents where status <> 'closed' and next_due_at <= ?
+       order by next_due_at, id limit 1`,
+    )
+    .get(clock);
+  return row ? (row as unknown as Incident) : null;
+}
+
+/** Every incident that has not closed, by rule and subject. */
+export function listLiveIncidents(db: Db): Incident[] {
+  const rows = db
+    .prepare("select * from incidents where status <> 'closed' order by rule_id, subject_id")
+    .all();
+  return rows as unknown as Incident[];
+}
+
+/** Saves a new incident and returns its id. The parameter names are the column names. */
 export function insertIncident(db: Db, incident: NewIncident): number {
   const result = db
     .prepare(
-      `insert into incidents (rule_id, subject_id, status, started_at, opened_at)
-       values (?, ?, ?, ?, ?)`,
+      `insert into incidents
+         (rule_id, subject_id, status, started_at, opened_at, last_notified_at, next_due_at,
+          follow_ups, opened_summary, closed_at)
+       values
+         (:rule_id, :subject_id, :status, :started_at, :opened_at, :last_notified_at, :next_due_at,
+          :follow_ups, :opened_summary, :closed_at)`,
     )
-    .run(
-      incident.rule_id,
-      incident.subject_id,
-      incident.status,
-      incident.started_at,
-      incident.opened_at,
-    );
+    .run({ ...incident });
   return Number(result.lastInsertRowid);
+}
+
+/** Replaces everything about an incident except which rule and subject it is for. */
+export function updateIncident(db: Db, id: number, incident: NewIncident): void {
+  db.prepare(
+    `update incidents set
+       status = :status, started_at = :started_at, opened_at = :opened_at,
+       last_notified_at = :last_notified_at, next_due_at = :next_due_at,
+       follow_ups = :follow_ups, opened_summary = :opened_summary, closed_at = :closed_at
+     where id = :id`,
+  ).run({
+    id,
+    status: incident.status,
+    started_at: incident.started_at,
+    opened_at: incident.opened_at,
+    last_notified_at: incident.last_notified_at,
+    next_due_at: incident.next_due_at,
+    follow_ups: incident.follow_ups,
+    opened_summary: incident.opened_summary,
+    closed_at: incident.closed_at,
+  });
 }
 
 /** Saves a notification for an incident and returns the stored row. */
@@ -167,10 +246,4 @@ export function insertNotification(
       JSON.stringify(notification.detail),
     );
   return { ...notification, id: Number(result.lastInsertRowid), incident_id: incidentId };
-}
-
-/** How many incidents have not closed. */
-export function countLiveIncidents(db: Db): number {
-  const row = db.prepare("select count(*) as n from incidents where status <> 'closed'").get();
-  return row!.n as number;
 }

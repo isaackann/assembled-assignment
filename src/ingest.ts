@@ -1,25 +1,32 @@
-// What happens to one line of the feed, in order: normalise it, advance the clock,
-// record it, apply it, check the rules, and hand back any notifications.
+// What happens to one line of the feed, in order: normalise it, advance the clock
+// and fire any timers that came due, record it, apply it, check the rules, and
+// hand back any notifications.
 // This is the one place the pure engine and the store meet. The replay calls it
 // for each line of a file; a live service would call it for each event received.
 
-import { conditionsHold, ruleCoversQueue } from "./engine/evaluate.ts";
-import { stepIncident } from "./engine/incidents.ts";
-import { type FeedEvent, type QueueSnapshot, formatTime, normalize } from "./engine/normalize.ts";
-import { applyQueueSnapshot } from "./engine/state.ts";
+import { evaluateRule, ruleCovers } from "./engine/evaluate.ts";
+import { type IncidentChange, onEvaluation, onTimer } from "./engine/incidents.ts";
+import { formatTime, normalize } from "./engine/normalize.ts";
+import { applyAgentEvent, applyQueueSnapshot } from "./engine/state.ts";
+import { type SubjectState, findField, subjectIdOf } from "./shared/catalog.ts";
+import { type StateKind, stateKindOf } from "./shared/rule.ts";
 import {
   type Db,
   type Notification,
-  getAgentLastEventTs,
+  getAgentState,
   getLiveIncident,
   getQueueState,
+  getRule,
   insertEvent,
   insertIncident,
   insertNotification,
   listRules,
-  saveAgentLastEventTs,
+  listTeamAgentIds,
+  nextDueIncident,
+  saveAgentState,
   saveQueueState,
   transaction,
+  updateIncident,
 } from "./store/store.ts";
 
 /** What became of a line. Only `applied` can change state or open an incident. */
@@ -61,31 +68,41 @@ export function ingestLine(db: Db, line: string, now: number): IngestResult {
 
   // Evaluation time only moves forward. An event with an older timestamp does not rewind it.
   const clock = Math.max(now, event.ts);
-  const skip = (outcome: Outcome, reason: string): IngestResult => {
-    return { outcome, reason, now: clock, notifications: [] };
+
+  // Time has passed: whatever came due by now fires first, stamped with its due
+  // time, before this event is applied. A duplicate or late line still moves time.
+  const fired = transaction(db, () => fireDueTimers(db, clock));
+  const result = (outcome: Outcome, reason: string | null, notifications: Notification[]) => {
+    return { outcome, reason, now: clock, notifications: [...fired, ...notifications] };
   };
 
   // Recording, applying and the incident writes are one transaction.
   return transaction(db, () => {
-    const subjectId = event.type === "queue_snapshot" ? event.queue_id : event.agent_id;
-    const newest = lastEventTs(db, event);
+    const isQueue = event.type === "queue_snapshot";
+    const subjectId = isQueue ? event.queue_id : event.agent_id;
+    const prevAgent = isQueue ? null : getAgentState(db, subjectId);
+    const newest = isQueue
+      ? (getQueueState(db, subjectId)?.last_event_ts ?? null)
+      : (prevAgent?.last_event_ts ?? null);
     // Strictly older: two events for one subject can share a timestamp, and both count.
     const late = newest !== null && event.ts < newest;
 
     // The duplicate check comes from the insert itself, so it wins over the late check.
     if (!insertEvent(db, event, subjectId, late ? "late" : "applied")) {
-      return skip("duplicate", `duplicate of ${event.event_id}`);
+      return result("duplicate", `duplicate of ${event.event_id}`, []);
     }
     if (late) {
-      return skip("late", `late, ${subjectId} already has data from ${formatTime(newest)}`);
+      return result("late", `late, ${subjectId} already has data from ${formatTime(newest)}`, []);
     }
 
-    if (event.type !== "queue_snapshot") {
-      saveAgentLastEventTs(db, event.agent_id, event.ts);
-      return { outcome: "applied", reason: null, now: clock, notifications: [] };
+    if (event.type === "queue_snapshot") {
+      const queue = applyQueueSnapshot(event);
+      saveQueueState(db, queue);
+      return result("applied", null, checkRules(db, "queue", queue, event.ts, clock));
     }
-    const notifications = applySnapshot(db, event, clock);
-    return { outcome: "applied", reason: null, now: clock, notifications };
+    const agent = applyAgentEvent(prevAgent, event);
+    saveAgentState(db, agent);
+    return result("applied", null, checkRules(db, "agent", agent, event.ts, clock, prevAgent));
   });
 }
 
@@ -123,36 +140,89 @@ export function replayFeed(
   return report;
 }
 
-function lastEventTs(db: Db, event: FeedEvent): number | null {
-  if (event.type === "queue_snapshot") {
-    return getQueueState(db, event.queue_id)?.last_event_ts ?? null;
-  }
-  return getAgentLastEventTs(db, event.agent_id);
-}
-
-/** Saves the queue's new state, then checks every rule that covers the queue. */
-function applySnapshot(db: Db, snapshot: QueueSnapshot, now: number): Notification[] {
-  const queue = applyQueueSnapshot(snapshot);
-  saveQueueState(db, queue);
-
+/**
+ * Fires every live incident's timer that is due by `clock`, earliest first. Asks
+ * again after each one, because a follow-up schedules the next and a long gap
+ * between events can make that one due too.
+ */
+function fireDueTimers(db: Db, clock: number): Notification[] {
   const written: Notification[] = [];
-  for (const rule of listRules(db)) {
-    if (!ruleCoversQueue(rule, queue.queue_id)) continue;
+  for (let due = nextDueIncident(db, clock); due; due = nextDueIncident(db, clock)) {
+    const rule = getRule(db, due.rule_id);
+    if (!rule) throw new Error(`Incident ${due.id}: its rule is missing`);
+    const state =
+      stateKindOf(rule.subject) === "queue"
+        ? getQueueState(db, due.subject_id)
+        : getAgentState(db, due.subject_id);
+    if (!state) throw new Error(`Incident ${due.id}: its subject has no state`);
 
-    const change = stepIncident({
-      rule,
-      queue,
-      holds: conditionsHold(rule, queue),
-      live: getLiveIncident(db, rule.id, queue.queue_id),
-      startedAt: snapshot.ts,
-      now,
-    });
-    if (!change) continue;
-
-    const incidentId = insertIncident(db, change.incident);
-    for (const notification of change.notifications) {
-      written.push(insertNotification(db, incidentId, notification));
-    }
+    written.push(
+      ...writeChange(db, due.id, onTimer({ rule, incident: due, state, at: due.next_due_at! })),
+    );
   }
   return written;
+}
+
+/** Checks every rule that covers this subject against its new state. */
+function checkRules(
+  db: Db,
+  kind: StateKind,
+  state: SubjectState,
+  eventTs: number,
+  now: number,
+  previous: SubjectState | null = null,
+): Notification[] {
+  const subjectId = subjectIdOf(state);
+  const written: Notification[] = [];
+
+  for (const rule of listRules(db)) {
+    if (stateKindOf(rule.subject) !== kind) continue;
+    // Read when the event arrives, so a team rule follows the roster as it changes.
+    const team =
+      rule.subject.kind === "team" ? listTeamAgentIds(db, rule.subject.resource_ids) : [];
+    if (!ruleCovers(rule, subjectId, team)) continue;
+
+    let live = getLiveIncident(db, rule.id, subjectId);
+    const result = evaluateRule(rule, state);
+    // A new call ends the old episode even when the predicate still holds.
+    // Compare individual fields: an unknown conjunction start must not hide a restart.
+    const restarted =
+      result.holds && previous !== null && rule.conditions.some((condition) => {
+        const field = findField(kind, condition.field);
+        const before = field.since?.(previous) ?? null;
+        const after = field.since?.(state) ?? null;
+        return before !== null && after !== null && after > before;
+      });
+    if (live && restarted) {
+      const ended = onEvaluation({
+        rule,
+        state: previous!,
+        result: { holds: false, since: null },
+        live,
+        eventTs,
+        now,
+      });
+      if (ended) written.push(...writeChange(db, live.id, ended));
+      live = null;
+    }
+    const change = onEvaluation({
+      rule,
+      state,
+      result,
+      live,
+      eventTs,
+      now,
+    });
+    if (change) written.push(...writeChange(db, live?.id ?? null, change));
+  }
+  return written;
+}
+
+/** Writes an incident change and its notifications. `id` is null for a new incident. */
+function writeChange(db: Db, id: number | null, change: IncidentChange): Notification[] {
+  const incidentId = id ?? insertIncident(db, change.next);
+  if (id !== null) updateIncident(db, id, change.next);
+  return change.notifications.map((notification) =>
+    insertNotification(db, incidentId, notification),
+  );
 }
