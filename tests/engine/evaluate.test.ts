@@ -95,7 +95,7 @@ describe("evaluateRule on an agent", () => {
       holds: true,
       since: at("09:35:00"),
     });
-    expect(evaluateRule(adherenceRule(), agentState({ in_violation: false })).holds).toBe(false);
+    expect(evaluateRule(adherenceRule(), agentState({ violation_since: null })).holds).toBe(false);
   });
 
   it("tests a state with '=' and takes the state's start as since", () => {
@@ -135,12 +135,54 @@ describe("evaluateRule on an agent", () => {
     if (reverse) rule.conditions.reverse();
     expect(evaluateRule(rule, agentState({
       state: "on_call", state_since: at("09:00:00"),
-      in_violation: false, violation_since: null,
+      violation_since: null,
     }))).toEqual({ holds: true, since: null });
   });
 
   it("throws when a number comparison names a text field", () => {
     const rule = adherenceRule({ conditions: [{ field: "state", op: ">", value: 3 }] });
-    expect(() => evaluateRule(rule, agentState())).toThrow('Operator ">" needs a number');
+    expect(() => evaluateRule(rule, agentState())).toThrow('Operator ">" needs a number field');
+  });
+
+  it("throws when 'in' names a number field", () => {
+    const rule = breachRule({ conditions: [{ field: "sla_pct", op: "in", value: ["high"] }] });
+    expect(() => evaluateRule(rule, queueState())).toThrow('Operator "in" needs a text field');
+  });
+});
+
+// The type rules these out, but rules are stored as JSON, so the evaluator checks again.
+describe("evaluateRule on an operator and value that disagree", () => {
+  const conditionOf = (condition: unknown) => condition as Condition;
+
+  it("throws on 'in' with a single value, rather than never alerting", () => {
+    const rule = adherenceRule({
+      conditions: [conditionOf({ field: "state", op: "in", value: "on_break" })],
+    });
+    expect(() => evaluateRule(rule, agentState({ state: "on_break" }))).toThrow(
+      'Operator "in" needs a list of text values (state)',
+    );
+  });
+
+  it("throws on '=' with a list", () => {
+    const rule = adherenceRule({
+      conditions: [conditionOf({ field: "state", op: "=", value: ["on_break"] })],
+    });
+    expect(() => evaluateRule(rule, agentState())).toThrow('Operator "=" needs a single value');
+  });
+
+  it("throws on a comparison with a text value", () => {
+    const rule = breachRule({
+      conditions: [conditionOf({ field: "sla_pct", op: ">", value: "on_call" })],
+    });
+    expect(() => evaluateRule(rule, queueState())).toThrow('Operator ">" needs a number value');
+  });
+
+  it("throws even when the field has no value to compare", () => {
+    const rule = breachRule({
+      conditions: [conditionOf({ field: "sla_pct", op: ">", value: "100" })],
+    });
+    expect(() => evaluateRule(rule, queueState({ sla_target_sec: 0 }))).toThrow(
+      'Operator ">" needs a number value',
+    );
   });
 });

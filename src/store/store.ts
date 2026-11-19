@@ -141,22 +141,19 @@ export function saveQueueState(db: Db, queue: QueueState): void {
 /** The agent's current state, or null if no event has been applied for them. */
 export function getAgentState(db: Db, agentId: string): AgentState | null {
   const row = db.prepare("select * from agent_state where agent_id = ?").get(agentId);
-  if (!row) return null;
-  // SQLite has no boolean: in_violation is stored as 0 or 1.
-  return { ...(row as unknown as AgentState), in_violation: row.in_violation === 1 };
+  return row ? (row as unknown as AgentState) : null;
 }
 
 /** Replaces the agent's state. */
 export function saveAgentState(db: Db, agent: AgentState): void {
   db.prepare(
     `insert or replace into agent_state
-       (agent_id, state, state_since, in_violation, violation_since, last_event_ts)
-     values (?, ?, ?, ?, ?, ?)`,
+       (agent_id, state, state_since, violation_since, last_event_ts)
+     values (?, ?, ?, ?, ?)`,
   ).run(
     agent.agent_id,
     agent.state,
     agent.state_since,
-    agent.in_violation ? 1 : 0,
     agent.violation_since,
     agent.last_event_ts,
   );
@@ -167,7 +164,7 @@ export function getLiveIncident(db: Db, ruleId: string, subjectId: string): Inci
   const row = db
     .prepare("select * from incidents where rule_id = ? and subject_id = ? and status <> 'closed'")
     .get(ruleId, subjectId);
-  return row ? (row as unknown as Incident) : null;
+  return row ? toIncident(row) : null;
 }
 
 /** The live incident with the earliest due time at or before `clock`, or null if none is due. */
@@ -178,15 +175,21 @@ export function nextDueIncident(db: Db, clock: number): Incident | null {
        order by next_due_at, id limit 1`,
     )
     .get(clock);
-  return row ? (row as unknown as Incident) : null;
+  return row ? toIncident(row) : null;
 }
 
 /** Every incident that has not closed, by rule and subject. */
 export function listLiveIncidents(db: Db): Incident[] {
   const rows = db
     .prepare("select * from incidents where status <> 'closed' order by rule_id, subject_id")
-    .all();
-  return rows as unknown as Incident[];
+    .all() as Row[];
+  return rows.map(toIncident);
+}
+
+// opened_values is stored as JSON text.
+function toIncident(row: Row): Incident {
+  const opened = row.opened_values as string | null;
+  return { ...(row as unknown as Incident), opened_values: opened ? JSON.parse(opened) : null };
 }
 
 /** Saves a new incident and returns its id. The parameter names are the column names. */
@@ -195,12 +198,12 @@ export function insertIncident(db: Db, incident: NewIncident): number {
     .prepare(
       `insert into incidents
          (rule_id, subject_id, status, started_at, opened_at, last_notified_at, next_due_at,
-          follow_ups, opened_summary, closed_at)
+          follow_ups, opened_values, closed_at)
        values
          (:rule_id, :subject_id, :status, :started_at, :opened_at, :last_notified_at, :next_due_at,
-          :follow_ups, :opened_summary, :closed_at)`,
+          :follow_ups, :opened_values, :closed_at)`,
     )
-    .run({ ...incident });
+    .run({ ...incident, opened_values: openedValuesJson(incident) });
   return Number(result.lastInsertRowid);
 }
 
@@ -210,7 +213,7 @@ export function updateIncident(db: Db, id: number, incident: NewIncident): void 
     `update incidents set
        status = :status, started_at = :started_at, opened_at = :opened_at,
        last_notified_at = :last_notified_at, next_due_at = :next_due_at,
-       follow_ups = :follow_ups, opened_summary = :opened_summary, closed_at = :closed_at
+       follow_ups = :follow_ups, opened_values = :opened_values, closed_at = :closed_at
      where id = :id`,
   ).run({
     id,
@@ -220,9 +223,13 @@ export function updateIncident(db: Db, id: number, incident: NewIncident): void 
     last_notified_at: incident.last_notified_at,
     next_due_at: incident.next_due_at,
     follow_ups: incident.follow_ups,
-    opened_summary: incident.opened_summary,
+    opened_values: openedValuesJson(incident),
     closed_at: incident.closed_at,
   });
+}
+
+function openedValuesJson(incident: NewIncident): string | null {
+  return incident.opened_values ? JSON.stringify(incident.opened_values) : null;
 }
 
 /** Saves a notification for an incident and returns the stored row. */
