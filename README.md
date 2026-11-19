@@ -8,7 +8,8 @@ Needs Node 24.15 or newer. The database (`node:sqlite`) and the TypeScript runne
 
 ```
 npm install
-npm run replay     # replay data/events.jsonl and print the notifications it fires
+npm run simulate   # the two services running against data/events.jsonl at 60x; Ctrl-C to stop
+npm run replay     # the same feed in one go, printing every notification it fires
 npm test
 ```
 
@@ -24,6 +25,21 @@ An incident is one rule being true for one queue or agent. Its owner hears once 
 - Each lead watches their own team (`data/directory.json`): out of adherence for 10 minutes, on a call for 45 minutes.
 - Each agent watches themself: out of adherence for 10 minutes.
 
-The replay prints 33 notifications, then the incidents still live when the feed ends.
+The replay prints 33 notifications, then the incidents still live when the feed ends. The simulation sends the same 33 up to 10:30, then the ticker carries on (for example, `a_42`'s call opens at 10:33).
+
+## How it runs
+
+In production the system is two functions. Both live in `src/functions/`, and both call the engine through `src/ingest.ts`:
+
+- **Events webhook** (`events.ts`, `POST /events`). It receives one feed event per request, records it, updates the queue's or agent's state, and checks the rules that cover it. It is the only path that changes state.
+- **Scheduled ticker** (`ticker.ts`, every 30 seconds). It fires incident deadlines that came due: an opening once a "for" has run out, a follow-up, a close after settling. Without it, a quiet feed would leave incidents silent.
+
+A deadline can fire up to one tick late; it is still stamped with its due time. If an event for that incident arrives before the tick does, the webhook settles the overdue deadline first, inside the same transaction. That way an agent who comes back into adherence one second after their 10 minutes still gets the opening, and a follow-up reports the numbers from when it came due.
+
+Neither function reads the system clock: each is given "now". In production that is the real clock. The sample feed is dated 2026-05-26, so `scripts/simulate.ts` gives them a simulated clock instead. It starts the webhook as a real HTTP server, posts each line when simulated time reaches it, and runs the ticker every 30 simulated seconds. Time keeps running after the last line, so follow-ups and closes keep arriving from the ticker alone. Each notification is labelled with the function that sent it.
+
+`scripts/replay.ts` runs the same two functions with no server and no waiting, and stops at the feed's last line.
+
+What the simulation does not show: a service on the real clock, several instances at once (that needs a row lock between the webhook and the ticker), or recovery after downtime.
 
 Not built yet: the surface for creating rules (API, form, assistant).
