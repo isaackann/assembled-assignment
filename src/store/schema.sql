@@ -38,7 +38,11 @@ create table agent_state (
 );
 
 -- The seeded directory. An agent's user id is its agent_id in the feed. A team
--- has one lead; each agent is on one team.
+-- has one lead; each agent is on one team. Queues are the ones a rule may name.
+create table queues (
+  id text primary key
+);
+
 create table teams (
   id      text primary key,
   lead_id text not null
@@ -51,13 +55,15 @@ create table users (
 );
 
 -- Subject ({ kind, resource_ids }) and conditions are JSON: they are always read
--- and written whole with the rule.
+-- and written whole with the rule. A deleted rule keeps its row (deleted_at is
+-- set), because its incidents and notifications still point at it.
 create table rules (
   id          text primary key,
   owner_id    text not null,
   subject     text not null,
   conditions  text not null,
-  for_seconds integer not null default 0
+  for_seconds integer not null default 0,
+  deleted_at  integer
 );
 
 -- One rule being true for one subject. Pending: holding, but not yet for long

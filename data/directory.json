@@ -1,4 +1,5 @@
 {
+  "queues": ["billing", "tier_2", "vip"],
   "teams": [
     { "id": "team_1", "lead_id": "lead_1", "agent_ids": ["a_07", "a_19", "a_31", "a_42"] },
     { "id": "team_2", "lead_id": "lead_2", "agent_ids": ["a_05", "a_11", "a_23", "a_88"] }

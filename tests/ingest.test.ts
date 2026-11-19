@@ -9,14 +9,14 @@ import {
   getQueueState,
   openStore,
   seedDirectory,
-  seedRules,
+  insertRules,
 } from "../src/store/store.ts";
 import { adherenceRule, at, breachRule, feedLine, snapshotLine } from "./testHelpers.ts";
 
 /** An empty in-memory database holding the one seeded rule. */
 function newStore(): Db {
   const db = openStore(":memory:");
-  seedRules(db, [breachRule()]);
+  insertRules(db, [breachRule()]);
   return db;
 }
 
@@ -243,12 +243,13 @@ describe("handleEvent", () => {
     function agentStore(): Db {
       const db = openStore(":memory:");
       seedDirectory(db, {
+        queues: [],
         teams: [
           { id: "team_1", lead_id: "lead_1", agent_ids: ["a_07", "a_19", "a_31", "a_42"] },
           { id: "team_2", lead_id: "lead_2", agent_ids: ["a_05", "a_11", "a_23", "a_88"] },
         ],
       });
-      seedRules(db, [
+      insertRules(db, [
         adherenceRule(),
         adherenceRule({
           id: "rule_a_19_adherence",
@@ -282,7 +283,7 @@ describe("handleEvent", () => {
     it("never checks a queue rule against an agent, even one with the same id", () => {
       const db = agentStore();
       // A queue rule naming "a_19" must not read queue fields from agent a_19's state.
-      seedRules(db, [
+      insertRules(db, [
         breachRule({
           id: "rule_queue_named_a_19",
           subject: { kind: "queue", resource_ids: ["a_19"] },
@@ -297,7 +298,7 @@ describe("handleEvent", () => {
     it("covers an agent who joined the team after the rule was created: teams are read per event", () => {
       const db = agentStore();
       // a_19 moves from team_1 to team_2; a team_2 rule created before the move covers them.
-      seedRules(db, [
+      insertRules(db, [
         adherenceRule({
           id: "rule_lead_2_team_adherence",
           owner_id: "lead_2",
@@ -350,7 +351,7 @@ describe("handleEvent", () => {
 
     function callStore(forSeconds = 2700, inAdherence = false) {
       const db = openStore(":memory:");
-      seedRules(db, [adherenceRule({
+      insertRules(db, [adherenceRule({
         id: "call", subject: { kind: "agent", resource_ids: ["a_19"] },
         for_seconds: forSeconds,
         conditions: [
@@ -422,7 +423,7 @@ describe("handleEvent", () => {
       const db = openStore(":memory:");
       // The rule names a field the catalog does not have, so evaluating it throws
       // after the event and the queue's state have already been written.
-      seedRules(db, [breachRule({ conditions: [{ field: "sla_percent", op: ">", value: 100 }] })]);
+      insertRules(db, [breachRule({ conditions: [{ field: "sla_percent", op: ">", value: 100 }] })]);
 
       expect(() => handleEvent(db, feedLine(39), 0)).toThrow('Unknown queue field "sla_percent"');
       expect(db.prepare("select count(*) as n from events").get()).toEqual({ n: 0 });

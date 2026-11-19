@@ -11,13 +11,16 @@ import { readFileSync } from "node:fs";
 import { formatTime, normalize } from "../src/engine/normalize.ts";
 import { type Outcome, handleEvent, tick } from "../src/ingest.ts";
 import { printNotifications } from "../src/notify/console.ts";
+import type { Directory } from "../src/shared/directory.ts";
+import type { Rule } from "../src/shared/rule.ts";
+import { validateRule } from "../src/shared/validate.ts";
 import {
   type Db,
   type Notification,
   listLiveIncidents,
   openStore,
   seedDirectory,
-  seedRules,
+  insertRules,
 } from "../src/store/store.ts";
 
 /** A line that was not applied, for the summary. */
@@ -107,13 +110,22 @@ export function replayFeed(
   return report;
 }
 
-/** An in-memory database holding the shipped directory and rules. */
+/**
+ * An in-memory database holding the shipped directory and rules. Each seeded rule
+ * goes through the same check as a rule sent to the API, and a bad one stops here.
+ */
 export function seededStore(): Db {
   const readData = (name: string) =>
     JSON.parse(readFileSync(new URL(`../data/${name}`, import.meta.url), "utf8"));
   const db = openStore(":memory:");
-  seedDirectory(db, readData("directory.json"));
-  seedRules(db, readData("rules.seed.json"));
+  const directory: Directory = readData("directory.json");
+  seedDirectory(db, directory);
+  const rules: Rule[] = readData("rules.seed.json");
+  for (const rule of rules) {
+    const checked = validateRule(rule, directory);
+    if (!checked.ok) throw new Error(`Seeded rule ${rule.id}: ${checked.errors.join("; ")}`);
+  }
+  insertRules(db, rules);
   return db;
 }
 

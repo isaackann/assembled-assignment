@@ -14,9 +14,10 @@ import type { Clock, Deliver } from "./clock.ts";
 
 export function createEventsApp(db: Db, clock: Clock, deliver: Deliver): express.Express {
   const app = express();
-  app.use(express.text({ type: "*/*" }));
 
-  app.post("/events", (req, res) => {
+  // The text parser is on the route, not the app: mounted beside the config API on
+  // one server, an app-wide parser would read the API's JSON bodies as text.
+  app.post("/events", express.text({ type: "*/*" }), (req, res) => {
     const line = typeof req.body === "string" ? req.body : "";
     const result = handleEvent(db, line, clock.now());
     deliver(result.notifications, "webhook");
