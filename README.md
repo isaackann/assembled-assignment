@@ -8,8 +8,8 @@ Needs Node 24.15 or newer. The database (`node:sqlite`) and the TypeScript runne
 
 ```
 npm install
-npm run simulate   # the two services running against data/events.jsonl at 60x; Ctrl-C to stop
-npm run replay     # the same feed in one go, printing every notification it fires
+npm run simulate   # open http://localhost:3000, add rules, click "Start feed"; Ctrl-C to stop
+npm run replay     # the seeded rules over the feed in one go, printing every notification
 npm test
 ```
 
@@ -29,7 +29,7 @@ The replay prints 33 notifications, then the incidents still live when the feed 
 
 ## How it runs
 
-In production the system is two functions. Both live in `src/functions/`, and both call the engine through `src/ingest.ts`:
+In production the system is three functions, all in `src/functions/`. The config API (`api.ts`) saves and lists rules and notifications. The other two call the engine through `src/ingest.ts`:
 
 - **Events webhook** (`events.ts`, `POST /events`). It receives one feed event per request, records it, updates the queue's or agent's state, and checks the rules that cover it. It is the only path that changes state.
 - **Scheduled ticker** (`ticker.ts`, every 30 seconds). It fires incident deadlines that came due: an opening once a "for" has run out, a follow-up, a close after settling. Without it, a quiet feed would leave incidents silent.
@@ -42,4 +42,15 @@ Neither function reads the system clock: each is given "now". In production that
 
 What the simulation does not show: a service on the real clock, several instances at once (that needs a row lock between the webhook and the ticker), or recovery after downtime.
 
-Not built yet: the surface for creating rules (API, form, assistant).
+## Creating rules
+
+`npm run simulate` serves a rules page on http://localhost:3000. Pick who you are ("Viewing as": there is no login), and the page shows your rules, a form to add one, and the notifications sent to you.
+
+- **The form** is built from the field catalog and the directory: what to watch (queues, agents or teams; "Me" and "My team" fill it in for you), conditions that must all hold, and how many minutes they must hold for. Notifications go to whoever created the rule.
+- **Every rule is checked before it is saved** (`src/shared/validate.ts`): the field exists, the operator suits it (no "above" on a state), the value suits both, and every queue, agent and team is in the directory. A typo like `on_brake` is refused rather than silently never firing. The seeded rules go through the same check.
+- **Deleting a rule** stops it being checked and closes its live incidents without a message. Its row stays, so past notifications still say which rule sent them.
+- **Nothing plays until "Start feed"**, so rules added first see the whole feed. It runs once; restart the command to run again (rules added on the page are lost on restart). A rule added mid-run applies from its subject's next event.
+
+The same calls work without the page: `GET /directory`, `GET /catalog`, `GET /rules?owner=`, `POST /rules`, `DELETE /rules/:id`, `GET /notifications?recipient=`, and `POST /simulation/start`.
+
+Not built yet: the assistant that fills the form from a sentence.
