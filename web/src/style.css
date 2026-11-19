@@ -205,3 +205,36 @@ legend {
 .saved {
   color: var(--closed);
 }
+
+.assistant {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+.assistant label {
+  font-weight: 600;
+  display: block;
+  margin-bottom: 6px;
+}
+
+.assistant .row {
+  display: flex;
+  gap: 8px;
+}
+
+.assistant input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.note {
+  color: var(--muted);
+  margin: 8px 0 0;
+}

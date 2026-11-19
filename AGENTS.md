@@ -9,6 +9,7 @@ npm run replay        # replay data/events.jsonl in one go, print notifications 
 npm run simulate      # builds web/, serves the page + API + webhook on :3000; "Start feed" plays data/events.jsonl at 60x
 npm test              # vitest
 npm run check-types   # tsc --noEmit, for the server and for web/
+node scripts/assistant-check.ts   # 7 fixed sentences against the real model (needs .env); not in npm test
 ```
 
 Node runs the `.ts` files directly. Imports need the `.ts` extension, type-only imports need `import type`, and enums and parameter properties are not available.
@@ -21,6 +22,7 @@ Node runs the `.ts` files directly. Imports need the `.ts` extension, type-only 
 | `src/engine/` | The logic: normalise, apply state, evaluate a rule, step an incident's lifecycle, word its messages |
 | `src/store/` | `schema.sql` and every SQLite read and write |
 | `src/ingest.ts` | `handleEvent` (one event arrived) and `tick` (time passed). The only place the engine and the store meet |
+| `src/assistant/` | Sentence to draft rule: the OpenAI request (strict JSON schema), reading the answer, `validateRule` on it. Drafts only; never saves |
 | `src/functions/` | The deployed functions: the config API (`api.ts`), the events webhook (`events.ts`), the scheduled ticker (`ticker.ts`), plus the `Clock` they read "now" from |
 | `src/notify/` | Delivery stub (console) |
 | `scripts/replay.ts` | Runs the feed through `tick` + `handleEvent` with no server or waiting; `replayFeed`, `arrivals`, `seededStore` |
@@ -38,6 +40,7 @@ Node runs the `.ts` files directly. Imports need the `.ts` extension, type-only 
 - `SAMPLE_EXPECTED` in `tests/testHelpers.ts` holds the expected notifications for the sample feed, worked out by hand; `tests/replay.test.ts` and `tests/simulate.test.ts` check against it. Change it only when the intended behaviour changes, never to match new output.
 - Never edit `data/events.jsonl`. Tests about dirt in the feed read the real line by number (`feedLine(68)`).
 - Tests live in `tests/`, mirroring `src/` (`src/engine/foo.ts` → `tests/engine/foo.test.ts`).
-- Every rule from outside (API, seeds, later the assistant) goes through `validateRule` before it is saved. A rule that passes must evaluate without throwing.
+- `OPENAI_API_KEY` and `OPENAI_MODEL` come from `.env` (gitignored), loaded only in `scripts/simulate.ts` and `scripts/assistant-check.ts`. `src/` never reads the environment; the assistant is passed in, or null when there is no key.
+- Every rule from outside (API, seeds, the assistant) goes through `validateRule` before it is saved. A rule that passes must evaluate without throwing.
 - Rules are soft-deleted (`deleted_at`): incidents and notifications keep pointing at them.
 - Keep changes narrow: no new dependency, option or abstraction without asking first.

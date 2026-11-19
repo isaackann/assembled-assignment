@@ -66,6 +66,22 @@ export async function deleteRule(id: string): Promise<void> {
   await fetch(`/rules/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
 
+/** Whether the server has an OpenAI key for the assistant. */
+export const getAssistant = () => getJson<{ enabled: boolean }>("/assistant");
+
+/** Asks the assistant for a draft rule. Nothing is saved. */
+export async function draftFromSentence(
+  ownerId: string,
+  sentence: string,
+): Promise<{ draft: RuleDraft } | { errors: string[] }> {
+  const response = await fetch("/rules/draft", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ owner_id: ownerId, sentence }),
+  });
+  return response.json();
+}
+
 export async function startFeed(): Promise<void> {
   await fetch("/simulation/start", { method: "POST" });
 }

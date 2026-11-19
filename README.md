@@ -17,6 +17,8 @@ npm test
 
 `npm run simulate` builds the page, then serves it with the API and the events webhook on port 3000. Add rules then click **Start feed**. Notifications appear on the page for whoever you are "viewing as".
 
+To fill the form from a sentence, put `OPENAI_API_KEY` and `OPENAI_MODEL` in `.env` (see "Writing a rule in a sentence"). Without them the sentence box shows but is switched off, and everything else works.
+
 `npm run replay` runs the 15 seeded rules over `data/events.jsonl` with no server and no waiting. It prints 33 notifications and the incidents still live at 10:30.
 
 ## Audience
@@ -53,6 +55,14 @@ Stored as data (what the rule watches, the conditions that must all hold, and du
 - **"Whenever X happens"** needs no special case: `state is on_break` with no "for" fires when an agent goes on break.
 
 Every rule is validated before it is saved (`src/shared/validate.ts`).
+
+**Writing a rule in a sentence.** Above the form, a lead or agent can type what they want ("ping me if any of my agents is on a call for 45 minutes"). The assistant (`src/assistant/assistant.ts`) sends the sentence, the field catalog, the directory and who is asking to OpenAI, and asks for strict JSON in the rule's shape.
+
+- The answer goes through the same `validateRule`.
+- The owner is always the person asking.
+- It only fills the form: nothing is saved until the person checks it and clicks Save.
+- If the sentence asks for something a rule can't say ("three of my agents on break at once"), the model gives a reason instead of a rule.
+- The model is never involved in evaluating events.
 
 **Rule Limitations.** These were left out on purpose, as each one adds a concept rather than a field:
 
@@ -99,7 +109,7 @@ Three deployed functions, all in `src/functions/`:
   The incident change and its notifications are written in one transaction, so they can't drift apart.
 
 - **Ticker** (`ticker.ts`, every 30 seconds). Fires deadlines that came due with no event: an opening once a "for" runs out, a follow-up, a close after settling. Without it, a quiet feed would leave incidents silent. `a_07`'s call crosses 45 minutes at 10:10, and no event for `a_07` arrives until 10:15.
-- **Config API** (`api.ts`). Create, list and delete rules; list a person's notifications; the directory and catalog the form is built from.
+- **Config API** (`api.ts`). Create, list and delete rules; list a person's notifications; the directory and catalog the form is built from; draft a rule from a sentence (`POST /rules/draft`, which saves nothing).
 
 The engine (`src/engine/`) does no I/O and never reads the clock. "Now" is passed in. That makes every run deterministic and lets the tests assert exact times. The sample feed is dated 2026-05-26, so the scripts pass a simulated clock; production would pass the real one.
 
@@ -146,21 +156,23 @@ I didn't build any of this since it's not feasible for a demo, but the current d
 
 ## Code and tests
 
-| Path             | Content                                                                                                             |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `src/shared/`    | The `Rule` type, the field catalog, the directory shape, `validateRule`                                             |
-| `src/engine/`    | Pure logic: normalise an event, apply it to state, evaluate a rule, step an incident's lifecycle, word its messages |
-| `src/store/`     | `schema.sql` and every SQLite read and write                                                                        |
-| `src/ingest.ts`  | `handleEvent` and `tick`: the only place the engine and the store meet                                              |
-| `src/functions/` | The three deployed functions                                                                                        |
-| `scripts/`       | `replay.ts` and `simulate.ts`: running the sample feed, not production code                                         |
-| `web/`           | The rules page (React, built by Vite), typed from `src/shared/`                                                     |
+| Path             | Content                                                                                                               |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `src/shared/`    | The `Rule` type, the field catalog, the directory shape, `validateRule`                                               |
+| `src/engine/`    | Pure logic: normalise an event, apply it to state, evaluate a rule, step an incident's lifecycle, word its messages   |
+| `src/store/`     | `schema.sql` and every SQLite read and write                                                                          |
+| `src/ingest.ts`  | `handleEvent` and `tick`: the only place the engine and the store meet                                                |
+| `src/functions/` | The three deployed functions                                                                                          |
+| `src/assistant/` | Sentence to draft rule (OpenAI Responses API, plain `fetch`), checked by `validateRule`                               |
+| `scripts/`       | `replay.ts` and `simulate.ts` run the sample feed; `assistant-check.ts` checks real translations. Not production code |
+| `web/`           | The rules page (React, built by Vite), typed from `src/shared/`                                                       |
 
-Test cases (`npm test`, 135 tests):
+Test cases (`npm test`, 145 tests):
 
 - **The whole sample feed against a table worked out by hand.** `SAMPLE_EXPECTED` in `tests/testHelpers.ts` lists the 33 notifications the seeded rules should send: time, kind, recipient, subject, rule. It was derived from the feed before the engine was written, not captured from output. The replay and the simulation must both match it row for row.
 - **A rule created through the API fires on the feed.** "Any of my agents goes on break", posted to `POST /rules`, sends exactly the four notifications worked out beforehand (09:35 opened, 09:50 and 10:05 follow-ups, 10:10 closed).
 - **The engine with plain objects and exact times:** "for", follow-ups, settle, re-crossing, the clock never moving backward, and late and duplicate events.
+- **The assistant with canned model answers:** the owner is whoever asked, an unknown queue is refused, and so are refusals, API errors and broken JSON. It is switched off without a key, and drafting saves nothing. How well a real model translates is a separate check, `node scripts/assistant-check.ts`. It sends 7 fixed sentences, including the three from the prompt and one a rule can't express, and compares each answer with the expected rule. It needs a key and isn't deterministic, so it isn't in `npm test`; it passed 7 of 7 on two runs.
 - **The dirt in the feed, using the real lines** (`feedLine(68)`) rather than retyped copies.
 - **The tests were checked by breaking the code on purpose.** Each sprint I made deliberate breaks in a scratch copy, about 40 in all. Examples: the timer firing after the event instead of before; settle applied to state rules; "my team" covering everyone; delete leaving incidents live. Each one failed the suite. Where one didn't, I added the missing test.
 
@@ -177,10 +189,9 @@ Known limits of what's built:
 
 Next, in order:
 
-1. **The assistant.** A lead types a sentence and a model returns a rule. It goes through the same `validateRule` and fills the form for review; nothing saves without confirming. The model would never touch event evaluation.
-2. **A head-of-support digest.**
-3. **Acknowledge** (stop follow-ups for one incident), **snooze** and **quiet hours**.
-4. **Preview before save:** "this rule would have opened 2 incidents this morning". The engine is deterministic, so this is a replay.
+1. **A head-of-support digest.**
+2. **Acknowledge** (stop follow-ups for one incident), **snooze** and **quiet hours**.
+3. **Preview before save:** "this rule would have opened 2 incidents this morning". The engine is deterministic, so this is a replay.
 
 Left out on purpose: real delivery, login and multi-tenancy (out of scope per the prompt); editing a rule (delete and recreate).
 

@@ -15,9 +15,12 @@ import {
   getDirectory,
   getNotifications,
   getRules,
+  type RuleDraft,
+  getAssistant,
   getSimulation,
   startFeed,
 } from "./api.ts";
+import { Assistant } from "./Assistant.tsx";
 import { RuleForm } from "./RuleForm.tsx";
 
 const REFRESH_MS = 2000;
@@ -29,11 +32,20 @@ export function App() {
   const [rules, setRules] = useState<SavedRule[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [simulation, setSimulation] = useState<SimulationStatus>({ started: false, now: null });
+  const [assistantOn, setAssistantOn] = useState(false);
+  // The assistant's latest draft, and a count so each new draft refills the form.
+  const [draft, setDraft] = useState<{ rule: RuleDraft; n: number } | null>(null);
 
   useEffect(() => {
     getDirectory().then(setDirectory);
     getCatalog().then(setCatalog);
+    getAssistant().then((status) => setAssistantOn(status.enabled));
   }, []);
+
+  const changeViewer = (next: string) => {
+    setViewer(next);
+    setDraft(null);
+  };
 
   const loadRules = useCallback(() => getRules(viewer).then(setRules), [viewer]);
   useEffect(() => {
@@ -67,7 +79,7 @@ export function App() {
         <h1>Notifications HQ</h1>
         <label>
           Viewing as{" "}
-          <select value={viewer} onChange={(e) => setViewer(e.target.value)}>
+          <select value={viewer} onChange={(e) => changeViewer(e.target.value)}>
             {directory.teams.map((team) => (
               <optgroup key={team.id} label={team.id}>
                 <option value={team.lead_id}>{team.lead_id} (lead)</option>
@@ -108,8 +120,15 @@ export function App() {
           </ul>
 
           <h2>New rule</h2>
+          <Assistant
+            key={`assistant-${viewer}`}
+            enabled={assistantOn}
+            viewer={viewer}
+            onDraft={(rule) => setDraft({ rule, n: (draft?.n ?? 0) + 1 })}
+          />
           <RuleForm
-            key={viewer}
+            key={`${viewer}-${draft?.n ?? 0}`}
+            initial={draft?.rule ?? null}
             viewer={viewer}
             directory={directory}
             catalog={catalog}
