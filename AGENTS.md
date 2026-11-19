@@ -16,18 +16,21 @@ Node runs the `.ts` files directly. Imports need the `.ts` extension, type-only 
 
 | Path | What it holds |
 | ---- | ------------- |
-| `src/shared/` | The `Rule` type and the field catalog (what a rule can test) |
-| `src/engine/` | The logic: normalise, apply state, evaluate a rule, step an incident |
+| `src/shared/` | The `Rule` type, the field catalog (what a rule can test, and its label), the directory shape |
+| `src/engine/` | The logic: normalise, apply state, evaluate a rule, step an incident's lifecycle, word its messages |
 | `src/store/` | `schema.sql` and every SQLite read and write |
 | `src/ingest.ts` | What happens to one feed line, in order. The only place the engine and the store meet |
 | `src/notify/` | Delivery stub (console) |
 | `src/replay.ts` | Command-line wrapper around `replayFeed` |
+| `data/` | The sample feed, the seeded directory (teams), the seeded rules |
 | `tests/` | Vitest suites mirroring `src/`, plus `testHelpers.ts` (real feed lines by number, fixtures) |
 
 ## Rules
 
 - `src/engine/` does no I/O and never reads the system clock. Time is passed in. This is what makes a replay give the same result every time and lets the tests assert exact times.
 - A new thing a rule can test is a new entry in `src/shared/catalog.ts`, not a new branch in the engine.
+- Times that fire between events (opening after a "for", follow-ups, closing after settle) are timers on the incident (`next_due_at`), fired by `ingest.ts` before each event and stamped with their due time.
+- `tests/replay.test.ts` holds the expected notifications for the sample feed, worked out by hand. Change it only when the intended behaviour changes, never to match new output.
 - Never edit `data/events.jsonl`. Tests about dirt in the feed read the real line by number (`feedLine(68)`).
 - Tests live in `tests/`, mirroring `src/` (`src/engine/foo.ts` → `tests/engine/foo.test.ts`).
 - Keep changes narrow: no new dependency, option or abstraction without asking first.

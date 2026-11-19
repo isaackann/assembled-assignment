@@ -1,9 +1,110 @@
 [
   {
-    "id": "rule_billing_sla_breached",
+    "id": "rule_sla_breached",
     "owner_id": "lead_1",
-    "subject": "queue",
-    "scope": { "kind": "queues", "queue_ids": ["billing"] },
-    "conditions": [{ "field": "sla_pct", "op": ">", "value": 100 }]
+    "subject": { "kind": "queue", "resource_ids": ["billing", "tier_2", "vip"] },
+    "conditions": [{ "field": "sla_pct", "op": ">", "value": 100 }],
+    "for_seconds": 0
+  },
+  {
+    "id": "rule_sla_near",
+    "owner_id": "lead_1",
+    "subject": { "kind": "queue", "resource_ids": ["billing", "tier_2", "vip"] },
+    "conditions": [
+      { "field": "sla_pct", "op": ">=", "value": 80 },
+      { "field": "sla_pct", "op": "<=", "value": 100 }
+    ],
+    "for_seconds": 0
+  },
+  {
+    "id": "rule_over_20_waiting",
+    "owner_id": "lead_1",
+    "subject": { "kind": "queue", "resource_ids": ["billing", "tier_2", "vip"] },
+    "conditions": [{ "field": "tickets_waiting", "op": ">", "value": 20 }],
+    "for_seconds": 0
+  },
+  {
+    "id": "rule_lead_1_team_adherence",
+    "owner_id": "lead_1",
+    "subject": { "kind": "team", "resource_ids": ["team_1"] },
+    "conditions": [{ "field": "in_violation", "op": "=", "value": true }],
+    "for_seconds": 600
+  },
+  {
+    "id": "rule_lead_1_team_long_call",
+    "owner_id": "lead_1",
+    "subject": { "kind": "team", "resource_ids": ["team_1"] },
+    "conditions": [{ "field": "state", "op": "=", "value": "on_call" }],
+    "for_seconds": 2700
+  },
+  {
+    "id": "rule_lead_2_team_adherence",
+    "owner_id": "lead_2",
+    "subject": { "kind": "team", "resource_ids": ["team_2"] },
+    "conditions": [{ "field": "in_violation", "op": "=", "value": true }],
+    "for_seconds": 600
+  },
+  {
+    "id": "rule_lead_2_team_long_call",
+    "owner_id": "lead_2",
+    "subject": { "kind": "team", "resource_ids": ["team_2"] },
+    "conditions": [{ "field": "state", "op": "=", "value": "on_call" }],
+    "for_seconds": 2700
+  },
+  {
+    "id": "rule_a_05_adherence",
+    "owner_id": "a_05",
+    "subject": { "kind": "agent", "resource_ids": ["a_05"] },
+    "conditions": [{ "field": "in_violation", "op": "=", "value": true }],
+    "for_seconds": 600
+  },
+  {
+    "id": "rule_a_07_adherence",
+    "owner_id": "a_07",
+    "subject": { "kind": "agent", "resource_ids": ["a_07"] },
+    "conditions": [{ "field": "in_violation", "op": "=", "value": true }],
+    "for_seconds": 600
+  },
+  {
+    "id": "rule_a_11_adherence",
+    "owner_id": "a_11",
+    "subject": { "kind": "agent", "resource_ids": ["a_11"] },
+    "conditions": [{ "field": "in_violation", "op": "=", "value": true }],
+    "for_seconds": 600
+  },
+  {
+    "id": "rule_a_19_adherence",
+    "owner_id": "a_19",
+    "subject": { "kind": "agent", "resource_ids": ["a_19"] },
+    "conditions": [{ "field": "in_violation", "op": "=", "value": true }],
+    "for_seconds": 600
+  },
+  {
+    "id": "rule_a_23_adherence",
+    "owner_id": "a_23",
+    "subject": { "kind": "agent", "resource_ids": ["a_23"] },
+    "conditions": [{ "field": "in_violation", "op": "=", "value": true }],
+    "for_seconds": 600
+  },
+  {
+    "id": "rule_a_31_adherence",
+    "owner_id": "a_31",
+    "subject": { "kind": "agent", "resource_ids": ["a_31"] },
+    "conditions": [{ "field": "in_violation", "op": "=", "value": true }],
+    "for_seconds": 600
+  },
+  {
+    "id": "rule_a_42_adherence",
+    "owner_id": "a_42",
+    "subject": { "kind": "agent", "resource_ids": ["a_42"] },
+    "conditions": [{ "field": "in_violation", "op": "=", "value": true }],
+    "for_seconds": 600
+  },
+  {
+    "id": "rule_a_88_adherence",
+    "owner_id": "a_88",
+    "subject": { "kind": "agent", "resource_ids": ["a_88"] },
+    "conditions": [{ "field": "in_violation", "op": "=", "value": true }],
+    "for_seconds": 600
   }
 ]

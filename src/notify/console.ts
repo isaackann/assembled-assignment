@@ -5,17 +5,17 @@
 import { formatTime } from "../engine/normalize.ts";
 import type { Notification } from "../store/store.ts";
 
-/** Prints notifications: when, kind, who it is for, why, then the numbers behind it. */
+/** Prints notifications: when, kind, who it is for, why, then the subject's state behind it. */
 export function printNotifications(notifications: Notification[]): void {
   for (const notification of notifications) {
-    const kind = notification.kind.toUpperCase();
-    const numbers = Object.entries(notification.detail)
+    const kind = notification.kind.replace("_", "-").toUpperCase();
+    const detail = Object.entries(notification.detail)
       .map(([name, value]) => `${name}=${value ?? "unknown"}`)
       .join("  ");
 
     console.log(
       `${formatTime(notification.at)}  ${kind}  to ${notification.recipient_id}  ${notification.message}`,
     );
-    console.log(`    ${numbers}`);
+    console.log(`    ${detail}`);
   }
 }

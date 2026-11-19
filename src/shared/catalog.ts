@@ -2,6 +2,8 @@
 // This is the one place to extend. A field added here can be used in a rule
 // without touching the engine.
 
+import type { StateKind } from "./rule.ts";
+
 /** What is currently known about one queue: its latest snapshot. */
 export interface QueueState {
   queue_id: string;
@@ -15,10 +17,36 @@ export interface QueueState {
   last_event_ts: number;
 }
 
-/** A queue field a rule can test. `read` returns null when the value is unknown. */
-export interface QueueField {
+/** What is currently known about one agent, built up from state changes and adherence checks. */
+export interface AgentState {
+  agent_id: string;
+  state: string;
+  /** When the agent entered `state`, by the feed's own times. */
+  state_since: number;
+  in_violation: boolean;
+  /** When the current violation started; null when the agent is in adherence. */
+  violation_since: number | null;
+  last_event_ts: number;
+}
+
+/** The current state of any subject. */
+export type SubjectState = QueueState | AgentState;
+
+/** A field's value; null when it is unknown. */
+export type FieldValue = number | string | boolean | null;
+
+/** A field a rule can test. */
+export interface Field {
   name: string;
-  read(queue: QueueState): number | null;
+  /** How the field reads in a message: "SLA used 108%". */
+  label: string;
+  /** Decides which operators apply, and whether an incident settles before it closes. */
+  type: "number" | "string" | "boolean";
+  /** Printed after a number: "%" or "s". */
+  unit?: string;
+  read(state: SubjectState): FieldValue;
+  /** When the current value started, if the feed says. Used for "for 10 minutes". */
+  since?(state: SubjectState): number | null;
 }
 
 /** Longest wait as a percentage of the SLA target, so rules never need arithmetic. */
@@ -28,15 +56,67 @@ function slaPct(queue: QueueState): number | null {
 }
 
 /** Every queue field a rule can test. */
-export const QUEUE_FIELDS: QueueField[] = [
-  { name: "sla_pct", read: slaPct },
-  { name: "tickets_waiting", read: (queue) => queue.tickets_waiting },
-  { name: "longest_wait_sec", read: (queue) => queue.longest_wait_sec },
+const QUEUE_FIELDS: Field[] = [
+  {
+    name: "sla_pct",
+    label: "SLA used",
+    type: "number",
+    unit: "%",
+    read: (s) => slaPct(asQueue(s)),
+  },
+  {
+    name: "tickets_waiting",
+    label: "tickets waiting",
+    type: "number",
+    read: (s) => asQueue(s).tickets_waiting,
+  },
+  {
+    name: "longest_wait_sec",
+    label: "longest wait",
+    type: "number",
+    unit: "s",
+    read: (s) => asQueue(s).longest_wait_sec,
+  },
 ];
 
-/** Reads one catalog field from a queue. Throws if the catalog has no such field. */
-export function readQueueField(name: string, queue: QueueState): number | null {
-  const field = QUEUE_FIELDS.find((candidate) => candidate.name === name);
-  if (!field) throw new Error(`Unknown queue field "${name}"`);
-  return field.read(queue);
+/** Every agent field a rule can test. */
+const AGENT_FIELDS: Field[] = [
+  {
+    name: "state",
+    label: "state",
+    type: "string",
+    read: (s) => asAgent(s).state,
+    since: (s) => asAgent(s).state_since,
+  },
+  {
+    name: "in_violation",
+    label: "out of adherence",
+    type: "boolean",
+    read: (s) => asAgent(s).in_violation,
+    since: (s) => asAgent(s).violation_since,
+  },
+];
+
+const CATALOG: Record<StateKind, Field[]> = { queue: QUEUE_FIELDS, agent: AGENT_FIELDS };
+
+/** The catalog entry for a field. Throws if the catalog has no such field. */
+export function findField(kind: StateKind, name: string): Field {
+  const field = CATALOG[kind].find((candidate) => candidate.name === name);
+  if (!field) throw new Error(`Unknown ${kind} field "${name}"`);
+  return field;
+}
+
+/** The queue or agent id of a subject's state. */
+export function subjectIdOf(state: SubjectState): string {
+  return "queue_id" in state ? state.queue_id : state.agent_id;
+}
+
+function asQueue(state: SubjectState): QueueState {
+  if (!("queue_id" in state)) throw new Error(`Expected a queue, got agent ${state.agent_id}`);
+  return state;
+}
+
+function asAgent(state: SubjectState): AgentState {
+  if (!("agent_id" in state)) throw new Error(`Expected an agent, got queue ${state.queue_id}`);
+  return state;
 }

@@ -4,7 +4,7 @@
 
 import { readFileSync } from "node:fs";
 
-import type { QueueState } from "../src/shared/catalog.ts";
+import type { AgentState, QueueState } from "../src/shared/catalog.ts";
 import type { Rule } from "../src/shared/rule.ts";
 
 const FEED_URL = new URL("../data/events.jsonl", import.meta.url);
@@ -63,9 +63,34 @@ export function breachRule(overrides: Partial<Rule> = {}): Rule {
   return {
     id: "rule_billing_sla_breached",
     owner_id: "lead_1",
-    subject: "queue",
-    scope: { kind: "queues", queue_ids: ["billing"] },
+    subject: { kind: "queue", resource_ids: ["billing"] },
     conditions: [{ field: "sla_pct", op: ">", value: 100 }],
+    for_seconds: 0,
+    ...overrides,
+  };
+}
+
+/** An agent's state. a_19 on break since 09:35, out of adherence since 09:35, unless overridden. */
+export function agentState(overrides: Partial<AgentState> = {}): AgentState {
+  return {
+    agent_id: "a_19",
+    state: "on_break",
+    state_since: at("09:35:00"),
+    in_violation: true,
+    violation_since: at("09:35:00"),
+    last_event_ts: at("09:36:00"),
+    ...overrides,
+  };
+}
+
+/** lead_1 is told when one of their agents has been out of adherence for 10 minutes. */
+export function adherenceRule(overrides: Partial<Rule> = {}): Rule {
+  return {
+    id: "rule_lead_1_team_adherence",
+    owner_id: "lead_1",
+    subject: { kind: "team", resource_ids: ["team_1"] },
+    conditions: [{ field: "in_violation", op: "=", value: true }],
+    for_seconds: 600,
     ...overrides,
   };
 }
