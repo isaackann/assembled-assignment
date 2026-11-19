@@ -4,8 +4,10 @@
 
 import { readFileSync } from "node:fs";
 
+import { formatTime } from "../src/engine/normalize.ts";
 import type { AgentState, QueueState } from "../src/shared/catalog.ts";
 import type { Rule } from "../src/shared/rule.ts";
+import type { Db } from "../src/store/store.ts";
 
 const FEED_URL = new URL("../data/events.jsonl", import.meta.url);
 
@@ -93,3 +95,64 @@ export function adherenceRule(overrides: Partial<Rule> = {}): Rule {
     ...overrides,
   };
 }
+
+/**
+ * The 33 notifications the shipped rules fire on the sample feed, worked out by
+ * hand from the feed before the engine was written: time, kind, recipient, subject,
+ * rule. The acceptance table for the replay and the simulation.
+ */
+export const SAMPLE_EXPECTED = [
+  ["09:30:00", "opened", "lead_1", "billing", "rule_sla_breached"],
+  ["09:36:00", "opened", "lead_1", "billing", "rule_over_20_waiting"],
+  ["09:45:00", "follow_up", "lead_1", "billing", "rule_sla_breached"],
+  ["09:45:00", "closed", "lead_1", "billing", "rule_over_20_waiting"],
+  ["09:45:00", "opened", "lead_1", "tier_2", "rule_sla_near"],
+  ["09:45:00", "opened", "lead_1", "a_19", "rule_lead_1_team_adherence"],
+  ["09:45:00", "opened", "a_19", "a_19", "rule_a_19_adherence"],
+  ["09:55:00", "opened", "lead_2", "a_11", "rule_lead_2_team_long_call"],
+  ["10:00:00", "follow_up", "lead_1", "billing", "rule_sla_breached"],
+  ["10:00:00", "follow_up", "lead_1", "tier_2", "rule_sla_near"],
+  ["10:00:00", "follow_up", "lead_1", "a_19", "rule_lead_1_team_adherence"],
+  ["10:00:00", "follow_up", "a_19", "a_19", "rule_a_19_adherence"],
+  ["10:00:00", "opened", "lead_1", "tier_2", "rule_sla_breached"],
+  ["10:05:00", "closed", "lead_1", "tier_2", "rule_sla_near"],
+  ["10:10:00", "opened", "lead_2", "a_88", "rule_lead_2_team_adherence"],
+  ["10:10:00", "opened", "a_88", "a_88", "rule_a_88_adherence"],
+  ["10:10:00", "opened", "lead_1", "a_07", "rule_lead_1_team_long_call"],
+  ["10:10:00", "follow_up", "lead_2", "a_11", "rule_lead_2_team_long_call"],
+  ["10:10:30", "closed", "lead_1", "a_19", "rule_lead_1_team_adherence"],
+  ["10:10:30", "closed", "a_19", "a_19", "rule_a_19_adherence"],
+  ["10:15:00", "follow_up", "lead_1", "billing", "rule_sla_breached"],
+  ["10:15:00", "follow_up", "lead_1", "tier_2", "rule_sla_breached"],
+  ["10:15:00", "opened", "lead_1", "a_31", "rule_lead_1_team_long_call"],
+  ["10:16:00", "opened", "lead_1", "billing", "rule_sla_near"],
+  ["10:20:00", "closed", "lead_1", "billing", "rule_sla_breached"],
+  ["10:20:00", "closed", "lead_1", "tier_2", "rule_sla_breached"],
+  ["10:20:00", "closed", "lead_2", "a_11", "rule_lead_2_team_long_call"],
+  ["10:25:00", "closed", "lead_1", "a_31", "rule_lead_1_team_long_call"],
+  ["10:25:00", "follow_up", "lead_2", "a_88", "rule_lead_2_team_adherence"],
+  ["10:25:00", "follow_up", "a_88", "a_88", "rule_a_88_adherence"],
+  ["10:25:00", "follow_up", "lead_1", "a_07", "rule_lead_1_team_long_call"],
+  ["10:25:30", "opened", "lead_2", "a_23", "rule_lead_2_team_adherence"],
+  ["10:25:30", "opened", "a_23", "a_23", "rule_a_23_adherence"],
+];
+
+/** Every stored notification as [time of day, kind, recipient, subject, rule]. */
+export function notificationRows(db: Db): string[][] {
+  return db
+    .prepare(
+      `select n.at, n.kind, n.recipient_id, i.subject_id, i.rule_id
+       from notifications n join incidents i on n.incident_id = i.id`,
+    )
+    .all()
+    .map((row) => [
+      formatTime(row.at as number).slice(11, 19),
+      row.kind as string,
+      row.recipient_id as string,
+      row.subject_id as string,
+      row.rule_id as string,
+    ]);
+}
+
+/** Rows in a comparable order. Within one second the order follows incident ids, which the tables do not try to predict. */
+export const sortedRows = (list: unknown[][]): string[] => list.map((row) => row.join(" ")).sort();

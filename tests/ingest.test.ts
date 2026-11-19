@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { ingestLine } from "../src/ingest.ts";
+import { arrivals } from "../scripts/replay.ts";
+import { handleEvent, tick } from "../src/ingest.ts";
 import {
   type Db,
   getAgentState,
@@ -19,13 +20,16 @@ function newStore(): Db {
   return db;
 }
 
-/** Ingests lines in order, carrying the clock forward, and returns each result. */
+/**
+ * Ingests lines in order, carrying the clock forward, and returns each result. Runs
+ * the scheduled tick before each line, as a ticker that never misses a beat would;
+ * the tick's notifications are put in front of the line's own.
+ */
 function ingestAll(db: Db, lines: string[]) {
-  let now = 0;
-  return lines.map((line) => {
-    const result = ingestLine(db, line, now);
-    now = result.now;
-    return result;
+  return arrivals(lines).map(({ line, at: now }) => {
+    const ticked = tick(db, now);
+    const result = handleEvent(db, line, now);
+    return { ...result, notifications: [...ticked, ...result.notifications] };
   });
 }
 
@@ -33,7 +37,7 @@ function storedEvents(db: Db, eventId: string) {
   return db.prepare("select ts, outcome from events where event_id = ?").all(eventId);
 }
 
-describe("ingestLine", () => {
+describe("handleEvent", () => {
   describe("duplicates", () => {
     it("drops a second event with the same id, even though its timestamp differs (lines 50 and 95)", () => {
       const db = newStore();
@@ -220,7 +224,7 @@ describe("ingestLine", () => {
       );
 
       expect(() =>
-        ingestLine(
+        handleEvent(
           db,
           snapshotLine({ event_id: "evt_b", ts: "2026-05-26T09:46:00Z" }),
           at("09:30:00"),
@@ -420,7 +424,7 @@ describe("ingestLine", () => {
       // after the event and the queue's state have already been written.
       seedRules(db, [breachRule({ conditions: [{ field: "sla_percent", op: ">", value: 100 }] })]);
 
-      expect(() => ingestLine(db, feedLine(39), 0)).toThrow('Unknown queue field "sla_percent"');
+      expect(() => handleEvent(db, feedLine(39), 0)).toThrow('Unknown queue field "sla_percent"');
       expect(db.prepare("select count(*) as n from events").get()).toEqual({ n: 0 });
       expect(getQueueState(db, "billing")).toBeNull();
     });
@@ -429,7 +433,7 @@ describe("ingestLine", () => {
   describe("rejects", () => {
     it("stores nothing for a malformed line and leaves the clock where it was", () => {
       const db = newStore();
-      const result = ingestLine(db, "{not json", at("09:00:00"));
+      const result = handleEvent(db, "{not json", at("09:00:00"));
 
       expect(result).toEqual({
         outcome: "rejected",

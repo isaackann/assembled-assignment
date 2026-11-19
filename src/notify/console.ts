@@ -5,8 +5,11 @@
 import { formatTime } from "../engine/normalize.ts";
 import type { Notification } from "../store/store.ts";
 
-/** Prints notifications: when, kind, who it is for, why, then the subject's state behind it. */
-export function printNotifications(notifications: Notification[]): void {
+/**
+ * Prints notifications: when, kind, who it is for, why, then the subject's state
+ * behind it. `prefix` starts each line (the simulation labels the sending function).
+ */
+export function printNotifications(notifications: Notification[], prefix = ""): void {
   for (const notification of notifications) {
     const kind = notification.kind.replace("_", "-").toUpperCase();
     const detail = Object.entries(notification.detail)
@@ -14,7 +17,7 @@ export function printNotifications(notifications: Notification[]): void {
       .join("  ");
 
     console.log(
-      `${formatTime(notification.at)}  ${kind}  to ${notification.recipient_id}  ${notification.message}`,
+      `${prefix}${formatTime(notification.at)}  ${kind}  to ${notification.recipient_id}  ${notification.message}`,
     );
     console.log(`    ${detail}`);
   }
