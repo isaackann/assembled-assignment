@@ -24,7 +24,8 @@ import express from "express";
 
 import { formatTime } from "../src/engine/normalize.ts";
 import type { Outcome } from "../src/ingest.ts";
-import { createApiApp } from "../src/functions/api.ts";
+import { openAiAsker } from "../src/assistant/assistant.ts";
+import { type Assistant, createApiApp } from "../src/functions/api.ts";
 import type { Clock, Deliver } from "../src/functions/clock.ts";
 import { createEventsApp } from "../src/functions/events.ts";
 import { runTick } from "../src/functions/ticker.ts";
@@ -116,11 +117,14 @@ export type ServerOptions = Omit<SimulationOptions, "baseUrl">;
  * control. The start control is the simulation's own, not a deployed function: it
  * stands in for "the feed begins". The feed is posted back to this same server.
  */
-export function createSimulationServer(options: ServerOptions): express.Express {
+export function createSimulationServer(
+  options: ServerOptions,
+  assistant: Assistant = null,
+): express.Express {
   const { db, clock, deliver } = options;
   const app = express();
   app.use(createEventsApp(db, clock, deliver));
-  app.use(createApiApp(db, clock));
+  app.use(createApiApp(db, clock, assistant));
 
   let started = false;
   app.get("/simulation", (_req, res) => {
@@ -146,6 +150,16 @@ if (import.meta.main) {
     process.exit(1);
   }
 
+  // OPENAI_API_KEY and OPENAI_MODEL, for the assistant. Without them it is switched off.
+  try {
+    process.loadEnvFile(fileURLToPath(new URL("../.env", import.meta.url)));
+  } catch {
+    // No .env file: the environment may still have the variables.
+  }
+  const apiKey = process.env.OPENAI_API_KEY;
+  const model = process.env.OPENAI_MODEL;
+  const assistant: Assistant = apiKey && model ? { model, ask: openAiAsker(apiKey) } : null;
+
   const db = seededStore();
   const clock = simClock();
   const report = emptyReport();
@@ -154,14 +168,17 @@ if (import.meta.main) {
     printNotifications(notifications, `[${source}]  `);
   };
 
-  const app = createSimulationServer({
-    db,
-    lines: readFileSync(feedPath, "utf8").split("\n"),
-    clock,
-    deliver,
-    sleep: (ms) => (ms > 0 ? sleepFor(ms / SPEED) : Promise.resolve()),
-    report,
-  });
+  const app = createSimulationServer(
+    {
+      db,
+      lines: readFileSync(feedPath, "utf8").split("\n"),
+      clock,
+      deliver,
+      sleep: (ms) => (ms > 0 ? sleepFor(ms / SPEED) : Promise.resolve()),
+      report,
+    },
+    assistant,
+  );
   // The rules page, built by `vite build` into web/dist.
   app.use(express.static(fileURLToPath(new URL("../web/dist", import.meta.url))));
   const server = app.listen(PORT);
@@ -180,5 +197,10 @@ if (import.meta.main) {
     `Rules page on http://localhost:${PORT}; click "Start feed" to play the sample feed.`,
   );
   console.log(`Events webhook on http://localhost:${PORT}/events; ticker every 30s.`);
+  console.log(
+    assistant
+      ? `Assistant on (${assistant.model}).`
+      : "Assistant off: no OPENAI_API_KEY / OPENAI_MODEL.",
+  );
   console.log(`Simulated time at ${SPEED}x. Ctrl-C to stop.\n`);
 }

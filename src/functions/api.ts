@@ -8,11 +8,16 @@
 // (`owner_id` on a rule, `?owner=` and `?recipient=` on reads).
 //
 // A rule saved here applies from its subject's next event; nothing is back-filled.
+//
+// The assistant (POST /rules/draft) only drafts: it returns a checked rule for the
+// form to show, and saves nothing. Without an OpenAI key it is switched off, and
+// GET /assistant says so, so the page can explain why.
 
 import { randomUUID } from "node:crypto";
 
 import express from "express";
 
+import { type AskModel, draftRule } from "../assistant/assistant.ts";
 import { describeRule } from "../engine/messages.ts";
 import { OPERATORS, listFields } from "../shared/catalog.ts";
 import type { Rule } from "../shared/rule.ts";
@@ -28,7 +33,10 @@ import {
 } from "../store/store.ts";
 import type { Clock } from "./clock.ts";
 
-export function createApiApp(db: Db, clock: Clock): express.Express {
+/** The model the assistant asks, or null when no key is configured. */
+export type Assistant = { model: string; ask: AskModel } | null;
+
+export function createApiApp(db: Db, clock: Clock, assistant: Assistant = null): express.Express {
   const app = express();
 
   // Who can be named in a rule: queues, teams, and everyone on them.
@@ -64,6 +72,34 @@ export function createApiApp(db: Db, clock: Clock): express.Express {
     const rule: Rule = { id: `rule_${randomUUID()}`, ...checked.draft };
     insertRules(db, [rule]);
     res.status(201).json({ ...rule, description: describeRule(rule) });
+  });
+
+  app.get("/assistant", (_req, res) => {
+    res.json({ enabled: assistant !== null });
+  });
+
+  // A sentence in, a checked draft out. The person reviews it in the form and saves it.
+  app.post("/rules/draft", express.json(), async (req, res) => {
+    if (!assistant) return void res.status(503).json({ errors: ["The assistant is not set up"] });
+    const { owner_id: ownerId, sentence } = req.body ?? {};
+    if (typeof ownerId !== "string" || typeof sentence !== "string" || sentence.trim() === "") {
+      return void res.status(400).json({ errors: ["owner_id and a sentence are required"] });
+    }
+    try {
+      const drafted = await draftRule(
+        sentence,
+        ownerId,
+        getDirectory(db),
+        assistant.model,
+        assistant.ask,
+      );
+      if (!drafted.ok) return void res.status(422).json({ errors: drafted.errors });
+      res.json({ draft: drafted.draft, description: describeRule({ id: "", ...drafted.draft }) });
+    } catch (err) {
+      res
+        .status(502)
+        .json({ errors: [`Could not reach the assistant: ${(err as Error).message}`] });
+    }
   });
 
   // Keeps the rule's row for its history; its live incidents close without a message.
