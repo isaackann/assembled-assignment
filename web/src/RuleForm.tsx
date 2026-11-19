@@ -29,18 +29,24 @@ interface Props {
   viewer: string;
   directory: Directory;
   catalog: Catalog;
+  /** A draft to start from (the assistant's), instead of an empty form. */
+  initial: RuleDraft | null;
   onSaved: () => void;
 }
 
-export function RuleForm({ viewer, directory, catalog, onSaved }: Props) {
+export function RuleForm({ viewer, directory, catalog, initial, onSaved }: Props) {
   const myTeam = directory.teams.find((team) => team.lead_id === viewer);
   const isAgent = directory.teams.some((team) => team.agent_ids.includes(viewer));
 
-  const [kind, setKind] = useState<Kind>(myTeam ? "team" : "agent");
-  const [ids, setIds] = useState<string[]>(myTeam ? [myTeam.id] : isAgent ? [viewer] : []);
+  const [kind, setKind] = useState<Kind>(initial?.subject.kind ?? (myTeam ? "team" : "agent"));
+  const [ids, setIds] = useState<string[]>(
+    initial?.subject.resource_ids ?? (myTeam ? [myTeam.id] : isAgent ? [viewer] : []),
+  );
   const fields = catalog[kind === "queue" ? "queue" : "agent"];
-  const [conditions, setConditions] = useState<Condition[]>([firstCondition(fields[0]!)]);
-  const [minutes, setMinutes] = useState(0);
+  const [conditions, setConditions] = useState<Condition[]>(
+    initial?.conditions ?? [firstCondition(fields[0]!)],
+  );
+  const [minutes, setMinutes] = useState(initial ? initial.for_seconds / 60 : 0);
   const [errors, setErrors] = useState<string[]>([]);
   const [saved, setSaved] = useState(false);
 
