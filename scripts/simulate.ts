@@ -1,7 +1,9 @@
 // Command line: node scripts/simulate.ts <feed file>
-// Runs the two deployed functions the way production would, against the sample feed,
-// in simulated time: the events webhook as a real HTTP server, and the scheduled
-// ticker every 30 simulated seconds. Ctrl-C stops it.
+// Runs the deployed functions the way production would, against the sample feed, in
+// simulated time: the config API (with the rules page) and the events webhook on one
+// real HTTP server, and the scheduled ticker every 30 simulated seconds. Nothing
+// plays until "Start feed" is clicked on the page (POST /simulation/start), so rules
+// can be added first. It runs once; restart the script to run again. Ctrl-C stops it.
 //
 // The simulated clock stands in for two things outside the system: the upstream
 // producer, which posts each line once simulated time reaches its arrival, and the
@@ -15,11 +17,14 @@
 // closes keep coming from the ticker alone.
 
 import { readFileSync } from "node:fs";
-import type { AddressInfo } from "node:net";
 import { setTimeout as sleepFor } from "node:timers/promises";
+import { fileURLToPath } from "node:url";
+
+import express from "express";
 
 import { formatTime } from "../src/engine/normalize.ts";
 import type { Outcome } from "../src/ingest.ts";
+import { createApiApp } from "../src/functions/api.ts";
 import type { Clock, Deliver } from "../src/functions/clock.ts";
 import { createEventsApp } from "../src/functions/events.ts";
 import { runTick } from "../src/functions/ticker.ts";
@@ -36,6 +41,7 @@ import {
 
 const TICK_EVERY_MS = 30_000;
 const SPEED = 60;
+const PORT = 3000;
 
 /** A clock the simulation moves itself. It only moves forward. */
 export interface SimClock extends Clock {
@@ -102,6 +108,37 @@ export async function runSimulation(options: SimulationOptions): Promise<void> {
   }
 }
 
+/** What the server needs to play the feed once it is told to start. */
+export type ServerOptions = Omit<SimulationOptions, "baseUrl">;
+
+/**
+ * One server for the simulation: the config API, the events webhook, and the start
+ * control. The start control is the simulation's own, not a deployed function: it
+ * stands in for "the feed begins". The feed is posted back to this same server.
+ */
+export function createSimulationServer(options: ServerOptions): express.Express {
+  const { db, clock, deliver } = options;
+  const app = express();
+  app.use(createEventsApp(db, clock, deliver));
+  app.use(createApiApp(db, clock));
+
+  let started = false;
+  app.get("/simulation", (_req, res) => {
+    res.json({ started, now: started ? clock.time : null });
+  });
+  app.post("/simulation/start", (req, res) => {
+    if (started) return void res.status(409).json({ error: "The feed has already started" });
+    started = true;
+    const baseUrl = `${req.protocol}://${req.get("host")}`;
+    runSimulation({ ...options, baseUrl }).catch((err) =>
+      console.error("Simulation stopped:", err),
+    );
+    res.status(202).json({ started });
+  });
+
+  return app;
+}
+
 if (import.meta.main) {
   const feedPath = process.argv[2];
   if (!feedPath) {
@@ -117,26 +154,31 @@ if (import.meta.main) {
     printNotifications(notifications, `[${source}]  `);
   };
 
-  const server = createEventsApp(db, clock, deliver).listen(0);
-  await new Promise((resolve) => server.once("listening", resolve));
-  const { port } = server.address() as AddressInfo;
-
-  process.once("SIGINT", () => {
-    console.log(`\nStopped at simulated ${formatTime(clock.time)}.`);
-    printSummary(db, feedPath, report);
-    server.close();
-    process.exit(0);
-  });
-
-  console.log(`Events webhook on http://localhost:${port}/events; ticker every 30s.`);
-  console.log(`Simulated time at ${SPEED}x. Ctrl-C to stop.\n`);
-  await runSimulation({
+  const app = createSimulationServer({
     db,
     lines: readFileSync(feedPath, "utf8").split("\n"),
-    baseUrl: `http://localhost:${port}`,
     clock,
     deliver,
     sleep: (ms) => (ms > 0 ? sleepFor(ms / SPEED) : Promise.resolve()),
     report,
   });
+  // The rules page, built by `vite build` into web/dist.
+  app.use(express.static(fileURLToPath(new URL("../web/dist", import.meta.url))));
+  const server = app.listen(PORT);
+
+  process.once("SIGINT", () => {
+    if (report.lines === 0) console.log("\nStopped before the feed started.");
+    else {
+      console.log(`\nStopped at simulated ${formatTime(clock.time)}.`);
+      printSummary(db, feedPath, report);
+    }
+    server.close();
+    process.exit(0);
+  });
+
+  console.log(
+    `Rules page on http://localhost:${PORT}; click "Start feed" to play the sample feed.`,
+  );
+  console.log(`Events webhook on http://localhost:${PORT}/events; ticker every 30s.`);
+  console.log(`Simulated time at ${SPEED}x. Ctrl-C to stop.\n`);
 }

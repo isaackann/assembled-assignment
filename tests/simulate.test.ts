@@ -7,7 +7,7 @@ import type { AddressInfo } from "node:net";
 import { describe, expect, it } from "vitest";
 
 import { emptyReport, seededStore } from "../scripts/replay.ts";
-import { runSimulation, simClock } from "../scripts/simulate.ts";
+import { createSimulationServer, runSimulation, simClock } from "../scripts/simulate.ts";
 import { createEventsApp } from "../src/functions/events.ts";
 import type { Source } from "../src/functions/clock.ts";
 import { SAMPLE_EXPECTED, at, feedLines, notificationRows, sortedRows } from "./testHelpers.ts";
@@ -84,5 +84,89 @@ describe("runSimulation on data/events.jsonl", () => {
     const second = await simulate();
 
     expect(second.rows).toEqual(first.rows);
+  });
+});
+
+// Sprint 3's exit: a rule created through the config API fires on the sample feed.
+// lead_1, "any of my agents goes on break". Worked out by hand from the feed before
+// this test was run: only a_19 goes on break in the feed (09:35, back at 10:10). A
+// state rule with no "for" opens on the event, follows up every 15 minutes on the
+// ticker, and closes on the event that ends the state.
+const BREAK_ROWS = [
+  ["09:35:00", "opened", "lead_1", "a_19"],
+  ["09:50:00", "follow_up", "lead_1", "a_19"],
+  ["10:05:00", "follow_up", "lead_1", "a_19"],
+  ["10:10:00", "closed", "lead_1", "a_19"],
+];
+
+describe("a rule created through the config API, then the feed started", () => {
+  /** The simulation's own server: config API, webhook and start control. */
+  async function startServer() {
+    const db = seededStore();
+    const server = createSimulationServer({
+      db,
+      lines: feedLines(),
+      clock: simClock(),
+      deliver: () => {},
+      sleep: async () => {},
+      stopAt: at("10:45:00"),
+      report: emptyReport(),
+    }).listen(0);
+    await new Promise((resolve) => server.once("listening", resolve));
+    const base = `http://localhost:${(server.address() as AddressInfo).port}`;
+    return { db, server, base };
+  }
+
+  /** Waits until the started feed has played up to its stop time. */
+  async function waitForFeed(base: string) {
+    for (let i = 0; i < 200; i++) {
+      const { now } = await (await fetch(`${base}/simulation`)).json();
+      if (now === at("10:45:00")) return;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    throw new Error("The feed did not finish");
+  }
+
+  it("fires the new rule exactly as worked out by hand, and leaves the seeded 33 as they were", async () => {
+    const { db, server, base } = await startServer();
+    try {
+      const created = await fetch(`${base}/rules`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          owner_id: "lead_1",
+          subject: { kind: "team", resource_ids: ["team_1"] },
+          conditions: [{ field: "state", op: "=", value: "on_break" }],
+          for_seconds: 0,
+        }),
+      });
+      const rule = await created.json();
+      expect(created.status).toBe(201);
+
+      expect((await fetch(`${base}/simulation/start`, { method: "POST" })).status).toBe(202);
+      await waitForFeed(base);
+
+      const rows = notificationRows(db);
+      expect(rows.filter((r) => r[4] === rule.id).map((r) => r.slice(0, 4))).toEqual(BREAK_ROWS);
+      const seeded = rows.filter((r) => r[4] !== rule.id && r[0]! <= "10:30:00");
+      expect(sortedRows(seeded)).toEqual(sortedRows(SAMPLE_EXPECTED));
+    } finally {
+      server.close();
+    }
+  });
+
+  it("starts once: a second start is refused", async () => {
+    const { server, base } = await startServer();
+    try {
+      expect(await (await fetch(`${base}/simulation`)).json()).toEqual({
+        started: false,
+        now: null,
+      });
+      expect((await fetch(`${base}/simulation/start`, { method: "POST" })).status).toBe(202);
+      expect((await fetch(`${base}/simulation/start`, { method: "POST" })).status).toBe(409);
+      await waitForFeed(base);
+    } finally {
+      server.close();
+    }
   });
 });
