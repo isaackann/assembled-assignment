@@ -1,0 +1,9 @@
+[
+  {
+    "id": "rule_billing_sla_breached",
+    "owner_id": "lead_1",
+    "subject": "queue",
+    "scope": { "kind": "queues", "queue_ids": ["billing"] },
+    "conditions": [{ "field": "sla_pct", "op": ">", "value": 100 }]
+  }
+]
